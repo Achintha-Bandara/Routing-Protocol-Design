@@ -8,14 +8,14 @@ import json
 import os
 import math
 
-class AOSPFAsynchronousWorkspaceDashboard:
+class aospfAsynchronousWorkspaceDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("AOSPF Unified Engine: Asynchronous Multi-Convergence Simulation")
+        self.root.title("aospf Unified Engine: Asynchronous Multi-Convergence Simulation")
         self.root.geometry("1550x950")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # AOSPF Protocol Timer Configurations (in milliseconds)
+        # aospf Protocol Timer Configurations (in milliseconds)
         self.hello_interval = 3000
         self.dead_interval = 10000
 
@@ -23,6 +23,9 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.w1 = 10.0
         self.w2 = 1.0
         self.L_max = 50.0  # Normalized maximum delay bound matching UI dropdown options
+
+        # Persistent Global Convergence Database Metrics Buffer
+        self.convergence_metrics_database = []
 
         # 1. Load topology from topology.json
         self.G = nx.Graph()
@@ -52,7 +55,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.original_edges_data = {}
         self.G.clear()
         
-        # Standard AOSPF reference bandwidth = 1000 Mbps (1 Gbps, modern default)
+        # Standard aospf reference bandwidth = 1000 Mbps (1 Gbps, modern default)
         REFERENCE_BW_MBPS = 1000
         
         def parse_bandwidth_mbps(bw_str):
@@ -74,7 +77,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
             bw_str = edge.get('bandwidth', '100Mbps')
             delay  = edge.get('delay', 10)
             bw_mbps = parse_bandwidth_mbps(bw_str)
-            # AOSPF cost = ceil(reference_bandwidth / link_bandwidth), minimum 1
+            # aospf cost = ceil(reference_bandwidth / link_bandwidth), minimum 1
             cost = max(1, math.ceil(REFERENCE_BW_MBPS / bw_mbps))
             self.edges_definition.append((u, v, cost, delay))
             self.G.add_edge(u, v, cost=cost, bandwidth=bw_str, delay=delay)
@@ -124,6 +127,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.delay_changes = []
         self.cost_changes  = []
         self.selected_edge = None
+        self.convergence_metrics_database = []  # Clear only when a fresh run is initialized
         
         # Execute Engine Compilation Pass
         self.run_continuous_event_simulation()
@@ -149,6 +153,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.link_toggles = []
         self.delay_changes = []
         self.cost_changes  = []
+        self.convergence_metrics_database = []  # Completely reset buffer history
         
         # Unlock Configuration Elements / Lock Playback Actions
         self.hello_combo.config(state="readonly")
@@ -240,7 +245,6 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.logs_database = [] 
         self.router_events = {n: [] for n in nodes}
         
-        self.convergence_metrics_database = []
         pending_failure_tracks = []
         pending_cost_tracks = [] # Tracks threshold metric cost shifts
 
@@ -256,7 +260,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
                     base_delay = mod_delay
             return base_delay
 
-        # Helper to compute time-dependent link AOSPF base costs
+        # Helper to compute time-dependent link aospf base costs
         def get_current_cost(u_node, v_node, eval_time):
             e_tuple = tuple(sorted((u_node, v_node)))
             base_cost = self.original_edges_data[e_tuple]['cost']
@@ -271,7 +275,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
 
         self.timeline_states = {}
         last_logged_state = "RED" 
-        initial_sync_logged = False
+        initial_sync_logged = len([x for x in self.convergence_metrics_database if x["type"] == "INITIAL"]) > 0
         last_protocol_instability = 0
         last_true_instability = 0
         
@@ -301,7 +305,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
                         self.router_events[u].append((current_time, f"Link interface route to Router {v} broken. Packet dropping active, waiting for Hello dead timer to trip.", "dropped"))
                         self.router_events[v].append((current_time, f"Link interface route to Router {u} broken. Packet dropping active, waiting for Hello dead timer to trip.", "dropped"))
 
-            # --- AOSPF PROTOCOL DEAD TIMER MONITORING MATRICES ---
+            # --- aospf PROTOCOL DEAD TIMER MONITORING MATRICES ---
             for u in nodes:
                 for nbr in self.G.neighbors(u):
                     if adj_states[u][nbr] in ["INIT", "2WAY"]:
@@ -350,11 +354,11 @@ class AOSPFAsynchronousWorkspaceDashboard:
                     if current_time > 0:
                         self.logs_database.append({
                             "time": current_time,
-                            "text": f"Periodic keepalive AOSPF HELLO broadcast sent from Router {router} out of interfaces.",
+                            "text": f"Periodic keepalive aospf HELLO broadcast sent from Router {router} out of interfaces.",
                             "routers": [router],
                             "type": "hello_tx"
                         })
-                        self.router_events[router].append((current_time, "Sent periodic AOSPF HELLO keepalive broadcast window frame out of interfaces.", "hello_tx"))
+                        self.router_events[router].append((current_time, "Sent periodic aospf HELLO keepalive broadcast window frame out of interfaces.", "hello_tx"))
                     
                     for nbr in self.G.neighbors(router):
                         delay = get_current_delay(router, nbr, current_time)
@@ -577,7 +581,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
                 if current_state_str == "GREEN":
                     self.logs_database.append({
                         "time": current_time, 
-                        "text": f"⭐ AOSPF NETWORK TOPOLOGY CONVERGENCE ACHIEVED! All local database maps are synchronized completely identical and accurate to physical wire states.", 
+                        "text": f"⭐ aospf NETWORK TOPOLOGY CONVERGENCE ACHIEVED! All local database maps are synchronized completely identical and accurate to physical wire states.", 
                         "routers": list(nodes), 
                         "type": "converged"
                     })
@@ -604,9 +608,11 @@ class AOSPFAsynchronousWorkspaceDashboard:
                                 f"  • Total Time to Synchronize After Physical Link Failure: {duration_from_fail} ms (Disrupted at t={t_fail} ms)\n"
                                 f"  • Time to Synchronize After Fault Detection (Dead Timer Expiry): {duration_from_timeout} ms (Alerted at t={t_timeout} ms)\n"
                             )
-                            self.convergence_metrics_database.append({
-                                "time": current_time, "type": "DISRUPTION", "text": msg
-                            })
+                            # Duplication gate check before writing
+                            if not any(x["text"] == msg and x["time"] == current_time for x in self.convergence_metrics_database):
+                                self.convergence_metrics_database.append({
+                                    "time": current_time, "type": "DISRUPTION", "text": msg
+                                })
                             pending_failure_tracks.remove(item)
 
                     for item in list(pending_cost_tracks):
@@ -621,22 +627,24 @@ class AOSPFAsynchronousWorkspaceDashboard:
                             f"  • Total Time to Synchronize After Physical Delay Alteration (Outside Sense): {duration_from_change} ms (Altered at t={t_change} ms)\n"
                             f"  • Time to Synchronize After Threshold Detection by Router: {duration_from_detection} ms (Detected at t={t_detection} ms)\n"
                         )
-                        self.convergence_metrics_database.append({
-                            "time": current_time, "type": "DISRUPTION", "text": msg
-                        })
+                        # Duplication gate check before writing
+                        if not any(x["text"] == msg and x["time"] == current_time for x in self.convergence_metrics_database):
+                            self.convergence_metrics_database.append({
+                                "time": current_time, "type": "DISRUPTION", "text": msg
+                            })
                         pending_cost_tracks.remove(item)
 
                 elif current_state_str == "YELLOW_DELAY":
                     self.logs_database.append({
                         "time": current_time,
-                        "text": "AOSPF link delay cost discrepancy detected in outside sense (Awaiting Hello detection handshake).",
+                        "text": "aospf link delay cost discrepancy detected in outside sense (Awaiting Hello detection handshake).",
                         "routers": list(nodes),
                         "type": "process"
                     })
                 elif current_state_str == "YELLOW":
                     self.logs_database.append({
                         "time": current_time,
-                        "text": "AOSPF network state synchronized, but inaccurate to physical map (Topology discrepancy window active).",
+                        "text": "aospf network state synchronized, but inaccurate to physical map (Topology discrepancy window active).",
                         "routers": list(nodes),
                         "type": "process"
                     })
@@ -823,7 +831,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.local_router_log_box.tag_config("dropped", foreground="#c0392b", font=("Helvetica", 9, "italic"))
         self.local_router_log_box.tag_config("db_update", foreground="#8e44ad", font=("Helvetica", 9, "bold"))
 
-        self.table_header_lbl = tk.Label(inspect_frame, text="AOSPF Routing Table (Based on Learned LSAs): Router A", font=("Helvetica", 10, "bold"), fg="#1b5c8f")
+        self.table_header_lbl = tk.Label(inspect_frame, text="aospf Routing Table (Based on Learned LSAs): Router A", font=("Helvetica", 10, "bold"), fg="#1b5c8f")
         self.table_header_lbl.pack(anchor=tk.W, pady=(2, 2))
         table_container = tk.Frame(inspect_frame, bd=1, relief=tk.SOLID)
         table_container.pack(fill=tk.BOTH, expand=True)
@@ -922,7 +930,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=8, font_weight='bold', ax=self.ax_f, rotate=True, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='#b2bec3', alpha=0.85))
 
         self.fig_f.suptitle("")
-        self.ax_f.set_title("AOSPF Network Topology — Configuration Mode", fontsize=10, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_title("aospf Network Topology — Configuration Mode", fontsize=10, fontweight='bold', color="#2c3e50")
         self.ax_f.set_xlim(-2, 20)
         self.ax_f.set_ylim(-1, 19)
         self.ax_f.axis('off')
@@ -933,7 +941,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
         
         self.packet_header_lbl.config(text=f"LSA Packet Structure Data: Router {self.selected_node}")
         self.local_log_header_lbl.config(text=f"Contextual Local Port Transmissions Log for Router {self.selected_node}:")
-        self.table_header_lbl.config(text=f"AOSPF Routing Table (Simulation Offline): Router {self.selected_node}")
+        self.table_header_lbl.config(text=f"aospf Routing Table (Simulation Offline): Router {self.selected_node}")
 
     # -------------------------------------------------------
     # ACTIVE RUNTIME ROUTING COMPILATION TREE
@@ -999,7 +1007,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
 
         self.packet_header_lbl.config(text=f"LSA Packet Structure Data: Router {target}")
         self.local_log_header_lbl.config(text=f"Contextual Local Port Transmissions Log for Router {target}:")
-        self.table_header_lbl.config(text=f"AOSPF Routing Table ({current_clock_time} ms Database Snapshot): Router {target}")
+        self.table_header_lbl.config(text=f"aospf Routing Table ({current_clock_time} ms Database Snapshot): Router {target}")
         
         self.lsa_view_box.delete('1.0', tk.END)
         if target in known_lsas_payloads:
@@ -1146,7 +1154,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
             if edge_tuple in state['broken_links']:
                 status_text = "TO" if (state['adj_states'][u][v] == "DOWN" or state['adj_states'][v][u] == "DOWN") else "HD"
             else:
-                # AOSPF cost lookup
+                # aospf cost lookup
                 active_cost_render = state["advertised_costs"][u][v]
                 status_text = f"C:{active_cost_render}"
                 
@@ -1156,7 +1164,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
             edge_labels[(u, v)] = f"{status_text}|{bw_short}|{active_delay_render}ms"
         nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=8, font_weight='bold', ax=self.ax_f, rotate=True, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='#b2bec3', alpha=0.85))
 
-        self.ax_f.set_title(f"Asynchronous AOSPF Flooding Clock: {current_clock_time} ms", fontsize=10, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_title(f"Asynchronous aospf Flooding Clock: {current_clock_time} ms", fontsize=10, fontweight='bold', color="#2c3e50")
         self.ax_f.set_xlim(-2, 20)
         self.ax_f.set_ylim(-1, 19)
         self.ax_f.axis('off')
@@ -1164,5 +1172,5 @@ class AOSPFAsynchronousWorkspaceDashboard:
 
 if __name__ == '__main__':
     window_root = tk.Tk()
-    application = AOSPFAsynchronousWorkspaceDashboard(window_root)
+    application = aospfAsynchronousWorkspaceDashboard(window_root)
     window_root.mainloop()

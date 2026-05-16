@@ -18,6 +18,9 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.hello_interval = 3000
         self.dead_interval = 10000
 
+        # Persistent Global Convergence Log Metrics Buffer
+        self.convergence_metrics_database = []
+
         # 1. Load topology from topology.json
         self.G = nx.Graph()
         self._load_topology()
@@ -118,6 +121,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.delay_changes = []
         self.cost_changes  = []
         self.selected_edge = None
+        self.convergence_metrics_database = []  # Clear historical view on fresh startup initialize
         
         # Execute Engine Compilation Pass
         self.run_continuous_event_simulation()
@@ -141,6 +145,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.link_toggles = []
         self.delay_changes = []
         self.cost_changes  = []
+        self.convergence_metrics_database = []  # Wipe metrics history tracking data logs clear
         
         # Unlock Configuration Elements / Lock Playback Actions
         self.hello_combo.config(state="readonly")
@@ -153,7 +158,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         # Reset text tracking fields
         self.flood_log.config(state=tk.NORMAL)
         self.flood_log.delete('1.0', tk.END)
-        self.flood_log.insert(tk.END, "⚙️ SYSTEM ADJACENCY IDLE MODE\nSelect your desired OSPF Hello Interval period above, then click 'Start Simulation 🚀' to execute the protocol state machine initialization sequence.")
+        self.flood_log.insert(tk.END, "⚙️ SYSTEM ADJACENCY IDLE MODE\nSelect your desired OSPF Hello Interval period above, then click 'Start Simulation 🚀' to execute the protocol state machine sequence.")
         self.flood_log.config(state=tk.DISABLED)
         
         self.convergence_log_box.config(state=tk.NORMAL)
@@ -247,7 +252,6 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.logs_database = [] 
         self.router_events = {n: [] for n in nodes}
         
-        self.convergence_metrics_database = []
         pending_failure_tracks = []
 
         # Helper to compute time-dependent link propagation delays
@@ -277,7 +281,7 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         self.timeline_states = {}
         last_logged_state = "RED" 
-        initial_sync_logged = False
+        initial_sync_logged = len([x for x in self.convergence_metrics_database if x["type"] == "INITIAL"]) > 0
         last_protocol_instability = 0
         last_true_instability = 0
         
@@ -291,8 +295,6 @@ class OSPFAsynchronousWorkspaceDashboard:
                     u, v = edge
                     if edge in broken_links:
                         broken_links.remove(edge)
-                        # TIMING SYMMETRY REPAIR: Dropped out-of-band immediate Hello packet burst injections.
-                        # The link is cleared physically, but routers must discover it via standard scheduled keepalives.
                         self.logs_database.append({
                             "time": current_time, "text": f"🛠️ LINK RESTORED: Physical connection established between Router {u} and Router {v}. Awaiting periodic HELLO discovery.", "routers": [u, v], "type": "process"
                         })
@@ -555,9 +557,11 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 f"  • Total Time to Synchronize After Physical Link Failure: {duration_from_fail} ms (Disrupted at t={t_fail} ms)\n"
                                 f"  • Time to Synchronize After Fault Detection (Dead Timer Expiry): {duration_from_timeout} ms (Alerted at t={t_timeout} ms)\n"
                             )
-                            self.convergence_metrics_database.append({
-                                "time": current_time, "type": "DISRUPTION", "text": msg
-                            })
+                            # Pre-write verification filter to prevent duplicate inserts during sequential visual step iterations
+                            if not any(x["text"] == msg and x["time"] == current_time for x in self.convergence_metrics_database):
+                                self.convergence_metrics_database.append({
+                                    "time": current_time, "type": "DISRUPTION", "text": msg
+                                })
                             pending_failure_tracks.remove(item)
 
                 elif current_state_str == "YELLOW":
