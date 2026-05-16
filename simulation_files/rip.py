@@ -79,6 +79,36 @@ class RIPEngine:
         log_entry = f"[{timestamp}] {message}"
         self.convergence_log.append(log_entry)
     
+    def estimate_convergence_time(self, graph):
+        """
+        Estimate RIP convergence time based on network topology.
+        RIP convergence factors:
+        - Update interval: 30 seconds (industry standard)
+        - Propagation: One hop per update cycle
+        - Settling: 3-5 update cycles for full convergence
+        Real-world: 90-180 seconds for typical networks
+        """
+        if graph.number_of_nodes() == 0:
+            return 0.0
+        
+        try:
+            if graph.number_of_nodes() == 1:
+                diameter = 0
+            elif graph.is_connected():
+                diameter = len(list(graph.nodes())) - 1
+            else:
+                diameters = []
+                for component in nx.connected_components(graph):
+                    subgraph = graph.subgraph(component)
+                    if subgraph.number_of_nodes() > 1:
+                        diameters.append(len(list(subgraph.nodes())) - 1)
+                diameter = max(diameters) if diameters else 0
+        except:
+            diameter = graph.number_of_nodes() - 1
+        
+        convergence_time = 30 + (diameter * 30) + 30
+        return round(min(convergence_time, 300.0), 3)
+    
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""
         return {
@@ -86,7 +116,8 @@ class RIPEngine:
             'message_type': 'Periodic RESPONSE/UPDATE',
             'description': 'RIP uses distance-vector algorithm with periodic updates (hop count metric, max 15 hops)',
             'title': 'RIP: Distance-Vector Route Distribution',
-            'convergence_desc': 'Exchange distance-vector information periodically between neighbors'
+            'convergence_desc': 'Exchange distance-vector information periodically between neighbors',
+            'typical_time': '90-180 seconds'
         }
     
     def get_convergence_log(self):

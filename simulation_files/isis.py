@@ -76,6 +76,37 @@ class ISISEngine:
         """Clear convergence log"""
         self.convergence_log = []
     
+    def estimate_convergence_time(self, graph):
+        """
+        Estimate IS-IS convergence time based on network topology.
+        IS-IS convergence factors:
+        - LSP flooding: ~1-2ms per hop
+        - L2 initial sync: ~100ms
+        - SPF calculation: O(n*logn) optimized
+        - L1 area convergence: ~500ms additional
+        Real-world: 1-2 seconds for typical networks
+        """
+        if graph.number_of_nodes() == 0:
+            return 0.0
+        
+        try:
+            if graph.number_of_nodes() == 1:
+                diameter = 0
+            elif graph.is_connected():
+                diameter = len(list(graph.nodes())) - 1
+            else:
+                diameters = []
+                for component in nx.connected_components(graph):
+                    subgraph = graph.subgraph(component)
+                    if subgraph.number_of_nodes() > 1:
+                        diameters.append(len(list(subgraph.nodes())) - 1)
+                diameter = max(diameters) if diameters else 0
+        except:
+            diameter = graph.number_of_nodes() - 1
+        
+        convergence_time = 0.1 + (diameter * 0.05) + 0.5
+        return round(min(convergence_time, 2.5), 3)
+    
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""
         return {
@@ -83,5 +114,6 @@ class ISISEngine:
             'message_type': 'Link State PDUs (LSPs)',
             'description': 'IS-IS floods LSPs throughout network for link-state routing similar to OSPF',
             'title': 'IS-IS: LSP Flooding & SPF Calculation',
-            'convergence_desc': 'Flood Link State PDUs to build topology and run SPF algorithm'
+            'convergence_desc': 'Flood Link State PDUs to build topology and run SPF algorithm',
+            'typical_time': '1-2 seconds'
         }

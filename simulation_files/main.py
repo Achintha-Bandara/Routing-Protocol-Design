@@ -15,7 +15,7 @@ import networkx as nx
 
 # ====== PROTOCOL SELECTION ======
 # Change this to switch protocols: 'ospf', 'bgp', 'isis', 'rip'
-PROTOCOL_NAME = 'isis'
+PROTOCOL_NAME = 'rip'
 # ================================
 
 # Dynamic protocol import
@@ -295,6 +295,10 @@ class ProtocolSimulator:
             
             # Get protocol-specific info
             protocol_info = self.protocol_engine.get_protocol_info()
+            
+            # Estimate convergence time based on topology
+            estimated_time = self.protocol_engine.estimate_convergence_time(self.graph)
+            self.ui.update_estimated_convergence_time(estimated_time)
             
             self.ui.update_status(f"Calculating {PROTOCOL_NAME.upper()} routes ({protocol_info['convergence_desc']})...", "#f39c12")
             self.root.update()

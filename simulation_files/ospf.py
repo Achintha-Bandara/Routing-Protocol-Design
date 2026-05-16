@@ -75,6 +75,36 @@ class OSPFEngine:
         """Clear convergence log"""
         self.convergence_log = []
     
+    def estimate_convergence_time(self, graph):
+        """
+        Estimate OSPF convergence time based on network topology.
+        OSPF convergence factors:
+        - LSA flooding: ~1ms per hop
+        - SPF calculation: O(n^2) but typically <100ms
+        - HELLO interval: 10 seconds default, but we simulate optimized network
+        Real-world: 1-3 seconds for typical networks
+        """
+        if graph.number_of_nodes() == 0:
+            return 0.0
+        
+        try:
+            if graph.number_of_nodes() == 1:
+                diameter = 0
+            elif graph.is_connected():
+                diameter = len(list(graph.nodes())) - 1
+            else:
+                diameters = []
+                for component in nx.connected_components(graph):
+                    subgraph = graph.subgraph(component)
+                    if subgraph.number_of_nodes() > 1:
+                        diameters.append(len(list(subgraph.nodes())) - 1)
+                diameter = max(diameters) if diameters else 0
+        except:
+            diameter = graph.number_of_nodes() - 1
+        
+        convergence_time = 0.5 + (diameter * 0.1) + 0.5
+        return round(min(convergence_time, 3.0), 3)
+    
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""
         return {
@@ -82,5 +112,6 @@ class OSPFEngine:
             'message_type': 'HELLO Packets',
             'description': 'OSPF uses HELLO packets to discover neighbors and establish adjacencies',
             'title': 'OSPF: HELLO Packet Exchange & SPF Calculation',
-            'convergence_desc': 'Flood Link State Advertisements (LSAs) throughout network'
+            'convergence_desc': 'Flood Link State Advertisements (LSAs) throughout network',
+            'typical_time': '1-3 seconds'
         }

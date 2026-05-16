@@ -122,6 +122,13 @@ class OSPFSimulatorUI:
                                        bg="#ecf0f1", fg="#27ae60", padx=10, pady=5)
         self.calc_time_label.pack(fill=tk.X, padx=10, pady=5)
         
+        # Estimated convergence time display
+        tk.Label(control_frame, text="Est. Convergence:", font=("Arial", 9, "bold"),
+                bg="white").pack(pady=(10, 0), padx=10, anchor="w")
+        self.est_time_label = tk.Label(control_frame, text="--", font=("Arial", 9),
+                                       bg="#ecf0f1", fg="#e74c3c", padx=10, pady=5)
+        self.est_time_label.pack(fill=tk.X, padx=10, pady=5)
+        
         # Info section
         tk.Label(control_frame, text="Network Information", font=("Arial", 10, "bold"),
                 bg="white").pack(pady=(15, 5), padx=10, anchor="w")
@@ -719,6 +726,12 @@ Routers:
         """Update calculation time display"""
         time_text = f"{elapsed_time:.3f}s"
         self.calc_time_label.config(text=time_text, fg="#27ae60")
+        self.root.update()
+    
+    def update_estimated_convergence_time(self, estimated_time):
+        """Update estimated convergence time display"""
+        time_text = f"{estimated_time:.3f}s"
+        self.est_time_label.config(text=time_text, fg="#e74c3c")
         self.root.update()
     
     def show_message(self, title, message, message_type="info"):

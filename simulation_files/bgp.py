@@ -76,6 +76,36 @@ class BGPEngine:
         """Clear convergence log"""
         self.convergence_log = []
     
+    def estimate_convergence_time(self, graph):
+        """
+        Estimate BGP convergence time based on network topology.
+        BGP convergence factors:
+        - Policy evaluation: ~100-500ms per AS
+        - MRAI timer: 30 seconds default (we use optimized 5s)
+        - Propagation delay: ~1-2 seconds between ASes
+        Real-world: 20-60+ seconds for typical networks
+        """
+        if graph.number_of_nodes() == 0:
+            return 0.0
+        
+        try:
+            if graph.number_of_nodes() == 1:
+                diameter = 0
+            elif graph.is_connected():
+                diameter = len(list(graph.nodes())) - 1
+            else:
+                diameters = []
+                for component in nx.connected_components(graph):
+                    subgraph = graph.subgraph(component)
+                    if subgraph.number_of_nodes() > 1:
+                        diameters.append(len(list(subgraph.nodes())) - 1)
+                diameter = max(diameters) if diameters else 0
+        except:
+            diameter = graph.number_of_nodes() - 1
+        
+        convergence_time = 1.0 + (diameter * 5.0) + 5.0 + 3.0
+        return round(min(convergence_time, 120.0), 3)
+    
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""
         return {
@@ -83,5 +113,6 @@ class BGPEngine:
             'message_type': 'UPDATE Messages',
             'description': 'BGP exchanges UPDATE messages to advertise and withdraw routes based on AS-PATH',
             'title': 'BGP: UPDATE Message Exchange & Path Selection',
-            'convergence_desc': 'Propagate routes via UPDATE messages between autonomous systems'
+            'convergence_desc': 'Propagate routes via UPDATE messages between autonomous systems',
+            'typical_time': '20-60+ seconds'
         }
