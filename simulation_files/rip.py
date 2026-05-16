@@ -1,139 +1,103 @@
-"""
-RIP Protocol Engine
-Handles RIP (Routing Information Protocol) calculations and routing table generation
-"""
-import networkx as nx
-from datetime import datetime
+from simulator import RouterNode
 
+class RIPNode(RouterNode):
+    MAX_HOPS = 15
+    
+    def __init__(self, node_id):
+        super().__init__(node_id)
+        # destination -> {'cost': int, 'next_hop': str, 'timer': float}
+        self.routing_table[self.id] = {'cost': 0, 'next_hop': self.id, 'timer': float('inf')}
+        
+    def start(self):
+        import random
+        jitter = random.uniform(0, 5.0)
+        self.simulator.schedule(jitter, self._send_periodic_update, f"RIP Init {self.id}")
+        self.simulator.schedule(1.0, self._check_timers, f"RIP Timer {self.id}")
+        
+    def _send_periodic_update(self):
+        self._broadcast_table()
+        import random
+        self.simulator.schedule(30.0 + random.uniform(-2, 2), self._send_periodic_update, f"RIP Update {self.id}")
+        
+    def _broadcast_table(self):
+        neighbors = self.get_neighbors()
+        for neighbor in neighbors:
+            payload = {}
+            for dest, info in self.routing_table.items():
+                if info['next_hop'] == neighbor and dest != self.id:
+                    # Split Horizon with Poison Reverse
+                    payload[dest] = 16
+                else:
+                    payload[dest] = info['cost']
+            
+            self.simulator.send_packet(self.id, neighbor, payload, color="#e74c3c")
+            
+    def _check_timers(self):
+        changed = False
+        current_time = self.simulator.sim_time
+        to_delete = []
+        for dest, info in self.routing_table.items():
+            if dest == self.id: continue
+            
+            time_since_update = current_time - info['timer']
+            
+            # Invalid Timer (180s)
+            if time_since_update > 180.0 and info['cost'] < 16:
+                info['cost'] = 16
+                changed = True
+                
+            # Flush Timer (240s)
+            if time_since_update > 240.0:
+                to_delete.append(dest)
+                changed = True
+                
+        for dest in to_delete:
+            del self.routing_table[dest]
+            
+        if changed:
+            self.last_update_time = current_time
+            self._broadcast_table() # Triggered update
+            
+    def link_up(self, neighbor):
+        self._broadcast_table()
+            
+        self.simulator.schedule(1.0, self._check_timers, f"RIP Timer {self.id}")
+        
+    def receive_packet(self, src, payload):
+        changed = False
+        current_time = self.simulator.sim_time
+        
+        for dest, cost in payload.items():
+            new_cost = min(cost + 1, 16)
+            
+            if dest not in self.routing_table:
+                if new_cost < 16:
+                    self.routing_table[dest] = {'cost': new_cost, 'next_hop': src, 'timer': current_time}
+                    changed = True
+            else:
+                current_info = self.routing_table[dest]
+                if current_info['next_hop'] == src:
+                    current_info['timer'] = current_time
+                    if current_info['cost'] != new_cost:
+                        current_info['cost'] = new_cost
+                        changed = True
+                elif new_cost < current_info['cost']:
+                    self.routing_table[dest] = {'cost': new_cost, 'next_hop': src, 'timer': current_time}
+                    changed = True
+                    
+        if changed:
+            self.last_update_time = current_time
+            self._broadcast_table()
 
 class RIPEngine:
-    """RIP Protocol implementation"""
-    
-    MAX_HOPS = 15  # RIP maximum hop count
-    
-    def __init__(self):
-        self.routing_tables = {}
-        self.convergence_log = []
-    
-    def calculate_shortest_paths(self, graph, source_router):
-        """
-        Calculate shortest paths using RIP distance-vector algorithm
-        RIP uses hop count as metric with max 15 hops
-        
-        Args:
-            graph: NetworkX graph representing network topology
-            source_router: Source router ID for RIP calculation
-            
-        Returns:
-            Dictionary with routing table (hop counts)
-        """
-        try:
-            # In RIP, we count hops (each link = 1 hop)
-            # Create unweighted version for hop counting
-            unweighted_graph = nx.Graph()
-            unweighted_graph.add_nodes_from(graph.nodes())
-            unweighted_graph.add_edges_from(graph.edges())
-            
-            lengths, paths = nx.single_source_dijkstra(unweighted_graph, source_router)
-            
-            table = {}
-            for dest, hops in lengths.items():
-                if hops <= self.MAX_HOPS and dest != source_router:
-                    next_hop = paths[dest][1] if len(paths[dest]) > 1 else dest
-                    table[dest] = {'cost': hops, 'next_hop': next_hop}
-            
-            self.routing_tables[source_router] = table
-            self.add_convergence_log(f"RIP calculated for {source_router}: {len(table)} routes")
-            
-            return table
-        except nx.NetworkXError as e:
-            error_msg = f"Error calculating RIP routes from {source_router}: {str(e)}"
-            self.add_convergence_log(error_msg)
-            return {}
-    
-    def calculate_all_routing_tables(self, graph):
-        """
-        Calculate routing tables for all routers using RIP algorithm
-        
-        Args:
-            graph: NetworkX graph representing network topology
-            
-        Returns:
-            Dictionary mapping router IDs to their routing tables
-        """
-        self.routing_tables = {}
-        
-        for router in graph.nodes():
-            self.calculate_shortest_paths(graph, router)
-        
-        self.add_convergence_log(f"RIP network converged. Total routers: {len(self.routing_tables)}")
-        return self.routing_tables
-    
-    def get_routing_table(self, router_id):
-        """Get routing table for a specific router"""
-        return self.routing_tables.get(router_id, {})
-    
-    def add_convergence_log(self, message):
-        """Add message to convergence log with timestamp"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {message}"
-        self.convergence_log.append(log_entry)
-    
-    def estimate_convergence_time(self, graph, is_reconvergence=False):
-        """
-        Estimate RIP convergence time based on network topology.
-        Calculates real-world values using 30s periodic timers, invalid timers (180s),
-        and count-to-infinity characteristics.
-        """
-        if graph.number_of_nodes() == 0:
-            return 0.0
-        
-        try:
-            if graph.number_of_nodes() == 1:
-                diameter = 0
-            elif nx.is_connected(graph):
-                diameter = nx.diameter(graph)
-            else:
-                diameters = []
-                for component in nx.connected_components(graph):
-                    subgraph = graph.subgraph(component)
-                    if subgraph.number_of_nodes() > 1:
-                        diameters.append(nx.diameter(subgraph))
-                diameter = max(diameters) if diameters else 0
-        except:
-            diameter = graph.number_of_nodes() - 1
-            
-        import random
-        
-        if not is_reconvergence:
-            # RIP Initial Startup
-            avg_wait = 15.0 # Average wait for next 30s periodic update
-            propagation = diameter * 2.0
-            time_sec = avg_wait + propagation
-        else:
-            # RIP Re-convergence (Slow, Invalid Timer + Triggered Updates)
-            invalid_timer = 180.0
-            propagation = diameter * 1.5
-            time_sec = invalid_timer + propagation
-            
-        time_sec *= random.uniform(0.95, 1.05)
-        return round(time_sec, 3)
-    
     def get_protocol_info(self):
-        """Get protocol-specific animation and display information"""
         return {
             'animation_type': 'distance_vector',
-            'message_type': 'Periodic RESPONSE/UPDATE',
-            'description': 'RIP uses distance-vector algorithm with periodic updates (hop count metric, max 15 hops)',
-            'title': 'RIP: Distance-Vector Route Distribution',
-            'convergence_desc': 'Exchange distance-vector information periodically between neighbors',
-            'typical_time': '90-180 seconds'
+            'message_type': 'RIP Updates',
+            'description': 'RIP distance-vector algorithm with 30s updates',
+            'title': 'RIP: Real-time Distance-Vector',
+            'convergence_desc': 'Converging using periodic updates and timers',
+            'typical_time': 'Real-time simulated'
         }
-    
-    def get_convergence_log(self):
-        """Get convergence log entries"""
-        return self.convergence_log
-    
-    def clear_convergence_log(self):
-        """Clear convergence log"""
-        self.convergence_log = []
+    def create_node(self, node_id):
+        return RIPNode(node_id)

@@ -1,0 +1,32 @@
+{
+  "nodes": [
+    { "id": "A", "x": 0, "y": 4 },
+    { "id": "B", "x": 1, "y": 6 },
+    { "id": "C", "x": 1, "y": 2 },
+    { "id": "D", "x": 3, "y": 7 },
+    { "id": "E", "x": 3, "y": 4 },
+    { "id": "F", "x": 3, "y": 1 },
+    { "id": "G", "x": 5, "y": 6 },
+    { "id": "H", "x": 5, "y": 3 },
+    { "id": "I", "x": 7, "y": 5 },
+    { "id": "J", "x": 7, "y": 2 }
+  ],
+  "edges": [
+    { "from": "A", "to": "B", "bandwidth": "500Mbps", "delay": 6  },
+    { "from": "A", "to": "C", "bandwidth": "100Mbps", "delay": 10 },
+    { "from": "B", "to": "D", "bandwidth": "200Mbps", "delay": 12 },
+    { "from": "B", "to": "E", "bandwidth": "50Mbps",  "delay": 16 },
+    { "from": "C", "to": "E", "bandwidth": "500Mbps", "delay": 8  },
+    { "from": "C", "to": "F", "bandwidth": "20Mbps",  "delay": 20 },
+    { "from": "D", "to": "G", "bandwidth": "100Mbps", "delay": 14 },
+    { "from": "D", "to": "H", "bandwidth": "10Mbps",  "delay": 24 },
+    { "from": "E", "to": "G", "bandwidth": "200Mbps", "delay": 11 },
+    { "from": "E", "to": "H", "bandwidth": "500Mbps", "delay": 9  },
+    { "from": "F", "to": "H", "bandwidth": "50Mbps",  "delay": 17 },
+    { "from": "G", "to": "I", "bandwidth": "100Mbps", "delay": 13 },
+    { "from": "G", "to": "J", "bandwidth": "20Mbps",  "delay": 21 },
+    { "from": "H", "to": "I", "bandwidth": "200Mbps", "delay": 10 },
+    { "from": "H", "to": "J", "bandwidth": "500Mbps", "delay": 7  },
+    { "from": "I", "to": "J", "bandwidth": "1Gbps",   "delay": 4  }
+  ]
+}

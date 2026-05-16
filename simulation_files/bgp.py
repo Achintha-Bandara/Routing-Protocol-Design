@@ -1,137 +1,105 @@
-"""
-BGP Protocol Engine
-Handles BGP (Border Gateway Protocol) calculations and routing table generation
-"""
-import networkx as nx
-from datetime import datetime
+from simulator import RouterNode
 
+class BGPNode(RouterNode):
+    def __init__(self, node_id):
+        super().__init__(node_id)
+        self.my_as = f"AS{hash(node_id)%1000 + 100}"
+        self.routing_table[self.id] = {'as_path': [self.my_as], 'next_hop': self.id, 'metric': 0}
+        self.neighbors_status = {}
+        
+    def start(self):
+        import random
+        jitter = random.uniform(0, 5.0)
+        self.simulator.schedule(jitter, self._send_keepalive, f"BGP KA {self.id}")
+        self.simulator.schedule(1.0, self._check_timers, f"BGP Timers {self.id}")
+        self.simulator.schedule(2.0, self._process_mrai, f"BGP MRAI {self.id}")
+        
+    def _send_keepalive(self):
+        payload = {'type': 'KEEPALIVE', 'router_id': self.id}
+        for neighbor in self.get_neighbors():
+            self.simulator.send_packet(self.id, neighbor, payload, color="#9b59b6")
+        self.simulator.schedule(60.0, self._send_keepalive, f"BGP KA {self.id}")
+        
+    def _check_timers(self):
+        current_time = self.simulator.sim_time
+        changed = False
+        to_remove = []
+        for neighbor, last_ka in self.neighbors_status.items():
+            if current_time - last_ka > 180.0:
+                to_remove.append(neighbor)
+                changed = True
+                
+        for neighbor in to_remove:
+            del self.neighbors_status[neighbor]
+            routes_to_delete = [d for d, info in self.routing_table.items() if info['next_hop'] == neighbor]
+            for d in routes_to_delete:
+                del self.routing_table[d]
+                
+        if changed:
+            self.last_update_time = self.simulator.sim_time
+            
+        self.simulator.schedule(1.0, self._check_timers, f"BGP Timers {self.id}")
+        
+    def link_up(self, neighbor):
+        # We don't have _send_update, but we process MRAI periodically. We can trigger an update by just processing MRAI immediately.
+        self._process_mrai()
+        
+    def _process_mrai(self):
+        payload = {'type': 'UPDATE', 'routes': {}}
+        for dest, info in self.routing_table.items():
+            payload['routes'][dest] = info
+            
+        for neighbor in self.get_neighbors():
+            neighbor_payload = {'type': 'UPDATE', 'routes': {}}
+            for dest, info in payload['routes'].items():
+                if info['next_hop'] != neighbor:
+                    neighbor_payload['routes'][dest] = info
+            self.simulator.send_packet(self.id, neighbor, neighbor_payload, color="#3498db")
+            
+        self.simulator.schedule(5.0, self._process_mrai, f"BGP MRAI {self.id}")
+        
+    def receive_packet(self, src, payload):
+        if payload['type'] == 'KEEPALIVE':
+            self.neighbors_status[src] = self.simulator.sim_time
+            return
+            
+        if payload['type'] == 'UPDATE':
+            self.neighbors_status[src] = self.simulator.sim_time
+            changed = False
+            
+            for dest, info in payload['routes'].items():
+                if dest == self.id: continue
+                if self.my_as in info['as_path']:
+                    continue
+                    
+                new_as_path = [self.my_as] + info['as_path']
+                new_metric = len(new_as_path)
+                
+                if dest not in self.routing_table:
+                    self.routing_table[dest] = {'as_path': new_as_path, 'next_hop': src, 'metric': new_metric}
+                    changed = True
+                else:
+                    current_info = self.routing_table[dest]
+                    if current_info['next_hop'] == src:
+                        if current_info['as_path'] != new_as_path:
+                            self.routing_table[dest] = {'as_path': new_as_path, 'next_hop': src, 'metric': new_metric}
+                            changed = True
+                    elif new_metric < current_info['metric']:
+                        self.routing_table[dest] = {'as_path': new_as_path, 'next_hop': src, 'metric': new_metric}
+                        changed = True
+                        
+            if changed:
+                self.last_update_time = self.simulator.sim_time
 
 class BGPEngine:
-    """BGP Protocol implementation"""
-    
-    def __init__(self):
-        self.routing_tables = {}
-        self.convergence_log = []
-        self.as_numbers = {}  # Track AS numbers
-    
-    def calculate_shortest_paths(self, graph, source_router):
-        """
-        Calculate shortest paths using BGP path selection algorithm
-        BGP uses AS Path length as primary metric
-        
-        Args:
-            graph: NetworkX graph representing network topology
-            source_router: Source router ID for BGP calculation
-            
-        Returns:
-            Dictionary with routing table
-        """
-        try:
-            lengths, paths = nx.single_source_dijkstra(graph, source_router, weight='weight')
-            table = {}
-            for dest in lengths:
-                if dest == source_router: continue
-                next_hop = paths[dest][1] if len(paths[dest]) > 1 else dest
-                as_path = " ".join([f"AS{hash(node)%1000 + 100}" for node in paths[dest][1:]])
-                table[dest] = {'cost': lengths[dest], 'next_hop': next_hop, 'as_path': as_path}
-            
-            self.routing_tables[source_router] = table
-            self.add_convergence_log(f"BGP calculated for {source_router}: {len(table)} routes")
-            
-            return table
-        except nx.NetworkXError as e:
-            error_msg = f"Error calculating BGP routes from {source_router}: {str(e)}"
-            self.add_convergence_log(error_msg)
-            return {}
-    
-    def calculate_all_routing_tables(self, graph):
-        """
-        Calculate routing tables for all routers using BGP algorithm
-        
-        Args:
-            graph: NetworkX graph representing network topology
-            
-        Returns:
-            Dictionary mapping router IDs to their routing tables
-        """
-        self.routing_tables = {}
-        
-        for router in graph.nodes():
-            self.calculate_shortest_paths(graph, router)
-        
-        self.add_convergence_log(f"BGP network converged. Total routers: {len(self.routing_tables)}")
-        return self.routing_tables
-    
-    def get_routing_table(self, router_id):
-        """Get routing table for a specific router"""
-        return self.routing_tables.get(router_id, {})
-    
-    def add_convergence_log(self, message):
-        """Add message to convergence log with timestamp"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {message}"
-        self.convergence_log.append(log_entry)
-    
-    def get_convergence_log(self):
-        """Get convergence log entries"""
-        return self.convergence_log
-    
-    def clear_convergence_log(self):
-        """Clear convergence log"""
-        self.convergence_log = []
-    
-    def estimate_convergence_time(self, graph, is_reconvergence=False):
-        """
-        Estimate BGP convergence time based on network topology.
-        Calculates real-world values using TCP handshake limits, MRAI timers, 
-        and Path Exploration effects based on network diameter.
-        """
-        if graph.number_of_nodes() == 0:
-            return 0.0
-        
-        try:
-            if graph.number_of_nodes() == 1:
-                diameter = 0
-            elif nx.is_connected(graph):
-                diameter = nx.diameter(graph)
-            else:
-                diameters = []
-                for component in nx.connected_components(graph):
-                    subgraph = graph.subgraph(component)
-                    if subgraph.number_of_nodes() > 1:
-                        diameters.append(nx.diameter(subgraph))
-                diameter = max(diameters) if diameters else 0
-        except:
-            diameter = graph.number_of_nodes() - 1
-            
-        import random
-        
-        nodes = graph.number_of_nodes()
-        
-        if not is_reconvergence:
-            # BGP Initial Startup (TCP Handshake, Open, Table Transfer)
-            base_startup = 2.0
-            table_transfer = nodes * 0.05
-            time_sec = base_startup + table_transfer
-        else:
-            # BGP Re-convergence (MRAI timers and Path Exploration)
-            detection = 0.050
-            best_path_calc = nodes * 0.001
-            mrai_timer = 5.0  # Average mix of iBGP (5s) and eBGP (30s) timers
-            path_exploration_delay = diameter * mrai_timer
-            
-            time_sec = detection + best_path_calc + path_exploration_delay
-            
-        time_sec *= random.uniform(0.95, 1.05)
-        return round(time_sec, 3)
-    
     def get_protocol_info(self):
-        """Get protocol-specific animation and display information"""
         return {
             'animation_type': 'update',
-            'message_type': 'UPDATE Messages',
-            'description': 'BGP exchanges UPDATE messages to advertise and withdraw routes based on AS-PATH',
-            'title': 'BGP: UPDATE Message Exchange & Path Selection',
-            'convergence_desc': 'Propagate routes via UPDATE messages between autonomous systems',
-            'typical_time': '20-60+ seconds'
+            'message_type': 'BGP UPDATE/KEEPALIVE',
+            'description': 'BGP Path-Vector with MRAI and Keepalive',
+            'title': 'BGP: Real-time Path-Vector',
+            'convergence_desc': 'Converging using UPDATE messages',
+            'typical_time': 'Real-time simulated'
         }
+    def create_node(self, node_id):
+        return BGPNode(node_id)

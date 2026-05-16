@@ -6,17 +6,23 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 import json
 import os
+import math
 
-class OSPFAsynchronousWorkspaceDashboard:
+class AOSPFAsynchronousWorkspaceDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("OSPF Unified Engine: Asynchronous Multi-Convergence Simulation")
+        self.root.title("AOSPF Unified Engine: Asynchronous Multi-Convergence Simulation")
         self.root.geometry("1550x950")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # OSPF Protocol Timer Configurations (in milliseconds)
+        # AOSPF Protocol Timer Configurations (in milliseconds)
         self.hello_interval = 3000
         self.dead_interval = 10000
+
+        # Composite Cost Formula Parameters
+        self.w1 = 10.0
+        self.w2 = 1.0
+        self.L_max = 50.0  # Normalized maximum delay bound matching UI dropdown options
 
         # 1. Load topology from topology.json
         self.G = nx.Graph()
@@ -36,17 +42,17 @@ class OSPFAsynchronousWorkspaceDashboard:
         with open(topology_path, 'r') as f:
             data = json.load(f)
         
-        # Build node positions from file
+        # Build node positions from file with a 2.5x spacing scalar to make lines longer
         self.node_positions = {}
         for node in data.get('nodes', []):
-            self.node_positions[node['id']] = (node['x'], node['y'])
+            self.node_positions[node['id']] = (node['x'] * 2.5, node['y'] * 2.5)
         
         # Build edge list and graph from file
         self.edges_definition = []
         self.original_edges_data = {}
         self.G.clear()
         
-        # Standard OSPF reference bandwidth = 1000 Mbps (1 Gbps, modern default)
+        # Standard AOSPF reference bandwidth = 1000 Mbps (1 Gbps, modern default)
         REFERENCE_BW_MBPS = 1000
         
         def parse_bandwidth_mbps(bw_str):
@@ -68,8 +74,7 @@ class OSPFAsynchronousWorkspaceDashboard:
             bw_str = edge.get('bandwidth', '100Mbps')
             delay  = edge.get('delay', 10)
             bw_mbps = parse_bandwidth_mbps(bw_str)
-            # OSPF cost = ceil(reference_bandwidth / link_bandwidth), minimum 1
-            import math
+            # AOSPF cost = ceil(reference_bandwidth / link_bandwidth), minimum 1
             cost = max(1, math.ceil(REFERENCE_BW_MBPS / bw_mbps))
             self.edges_definition.append((u, v, cost, delay))
             self.G.add_edge(u, v, cost=cost, bandwidth=bw_str, delay=delay)
@@ -88,11 +93,10 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.simulation_started = False
         self.current_time_ms = 0
         self.max_sim_time = 25000  # Total simulation window boundary (25 seconds)
-        self.selected_node = "A" # Unified single node selection focus
         self.selected_edge = None # Tracks currently selected link path interface
         self.link_toggles = [] # Dynamic structural disruption change logging database
         self.delay_changes = [] # Dynamic property runtime delay adjustment logs
-        self.cost_changes  = [] # Dynamic property runtime OSPF cost adjustment logs
+        self.cost_changes  = [] # Retained internally for fallback validation paths
 
         # Build UI Panels
         self.setup_ui()
@@ -113,6 +117,8 @@ class OSPFAsynchronousWorkspaceDashboard:
         """Extracts configuration parameters and triggers the discrete event simulator."""
         self.hello_interval = int(self.hello_combo.get())
         self.dead_interval = self.hello_interval * 4 
+        self.w1 = float(self.w1_combo.get())
+        self.w2 = float(self.w2_combo.get())
         self.current_time_ms = 0
         self.link_toggles = [] 
         self.delay_changes = []
@@ -125,6 +131,8 @@ class OSPFAsynchronousWorkspaceDashboard:
         
         # Update Control Widget Lock States
         self.hello_combo.config(state="disabled")
+        self.w1_combo.config(state="disabled")
+        self.w2_combo.config(state="disabled")
         self.start_btn.config(state="disabled")
         self.prev_btn.config(state="normal")
         self.next_btn.config(state="normal")
@@ -144,6 +152,8 @@ class OSPFAsynchronousWorkspaceDashboard:
         
         # Unlock Configuration Elements / Lock Playback Actions
         self.hello_combo.config(state="readonly")
+        self.w1_combo.config(state="readonly")
+        self.w2_combo.config(state="readonly")
         self.start_btn.config(state="normal")
         self.prev_btn.config(state="disabled")
         self.next_btn.config(state="disabled")
@@ -153,7 +163,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         # Reset text tracking fields
         self.flood_log.config(state=tk.NORMAL)
         self.flood_log.delete('1.0', tk.END)
-        self.flood_log.insert(tk.END, "⚙️ SYSTEM ADJACENCY IDLE MODE\nSelect your desired OSPF Hello Interval period above, then click 'Start Simulation 🚀' to execute the protocol state machine initialization sequence.")
+        self.flood_log.insert(tk.END, "⚙️ SYSTEM ADJACENCY IDLE MODE\nConfigure metrics above, then click 'Start Simulation 🚀' to execute the protocol state machine sequence.")
         self.flood_log.config(state=tk.DISABLED)
         
         self.convergence_log_box.config(state=tk.NORMAL)
@@ -198,23 +208,6 @@ class OSPFAsynchronousWorkspaceDashboard:
             self.run_continuous_event_simulation()
             self.render_all_views()
 
-    def apply_runtime_cost_change(self, event=None):
-        """Injects a runtime OSPF cost modification into the event matrix."""
-        if self.selected_edge and self.simulation_started:
-            new_cost = int(self.cost_change_combo.get())
-            self.cost_changes.append((self.selected_edge, new_cost, self.current_time_ms))
-            
-            u, v = self.selected_edge
-            self.logs_database.append({
-                "time": self.current_time_ms,
-                "text": f"⚙️ COST MODIFICATION: OSPF cost on link {u}-{v} changed to {new_cost} at runtime. Triggering re-flooding.",
-                "routers": [u, v],
-                "type": "process"
-            })
-            
-            self.run_continuous_event_simulation()
-            self.render_all_views()
-
     def skip_to_synchronize(self):
         """Instantly jumps the timeline engine clock forward to the next true convergence milestone timestamp."""
         if self.simulation_started:
@@ -249,6 +242,10 @@ class OSPFAsynchronousWorkspaceDashboard:
         
         self.convergence_metrics_database = []
         pending_failure_tracks = []
+        pending_cost_tracks = [] # Tracks threshold metric cost shifts
+
+        # Track currently actively utilized/advertised database routing metrics locally per node interface
+        advertised_costs = {n: {nbr: self.original_edges_data[tuple(sorted((n, nbr)))]['cost'] for nbr in self.G.neighbors(n)} for n in nodes}
 
         # Helper to compute time-dependent link propagation delays
         def get_current_delay(u_node, v_node, eval_time):
@@ -259,13 +256,10 @@ class OSPFAsynchronousWorkspaceDashboard:
                     base_delay = mod_delay
             return base_delay
 
-        # Helper to compute time-dependent link OSPF costs
+        # Helper to compute time-dependent link AOSPF base costs
         def get_current_cost(u_node, v_node, eval_time):
             e_tuple = tuple(sorted((u_node, v_node)))
             base_cost = self.original_edges_data[e_tuple]['cost']
-            for mod_edge, mod_cost, timestamp in self.cost_changes:
-                if mod_edge == e_tuple and timestamp <= eval_time:
-                    base_cost = mod_cost
             return base_cost
 
         # --- SEED INITIAL HELLO TRANSMISSION EVENTS ---
@@ -291,8 +285,6 @@ class OSPFAsynchronousWorkspaceDashboard:
                     u, v = edge
                     if edge in broken_links:
                         broken_links.remove(edge)
-                        # TIMING SYMMETRY REPAIR: Dropped out-of-band immediate Hello packet burst injections.
-                        # The link is cleared physically, but routers must discover it via standard scheduled keepalives.
                         self.logs_database.append({
                             "time": current_time, "text": f"🛠️ LINK RESTORED: Physical connection established between Router {u} and Router {v}. Awaiting periodic HELLO discovery.", "routers": [u, v], "type": "process"
                         })
@@ -309,26 +301,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                         self.router_events[u].append((current_time, f"Link interface route to Router {v} broken. Packet dropping active, waiting for Hello dead timer to trip.", "dropped"))
                         self.router_events[v].append((current_time, f"Link interface route to Router {u} broken. Packet dropping active, waiting for Hello dead timer to trip.", "dropped"))
 
-            # Evaluate interactive runtime OSPF cost modifications to force active re-flooding
-            for edge, new_c, c_time in self.cost_changes:
-                if c_time == current_time:
-                    u, v = edge
-                    active_protocol_disruption = True
-                    for r in [u, v]:
-                        lsa_seq[r] += 1
-                        active_nbrs = {k: get_current_cost(r, k, current_time) for k in self.G.neighbors(r) if adj_states[r][k] == "2WAY"}
-                        lsa_payload = {
-                            "router_id": r, "sequence_num": lsa_seq[r], "ttl": 64, "neighbors": active_nbrs
-                        }
-                        current_lsdb[r][r] = lsa_payload
-                        self.router_events[r].append((current_time, f"Local interface metric cost changed administratively. Issued out-of-band Router-LSA (Seq: {lsa_seq[r]}).", "db_update"))
-                        
-                        for flooded_nbr in self.G.neighbors(r):
-                            if adj_states[r][flooded_nbr] == "2WAY":
-                                link_prop_delay = get_current_delay(r, flooded_nbr, current_time)
-                                event_queue.append((current_time + link_prop_delay, "LSA_ARRIVE", (r, flooded_nbr, lsa_payload, link_prop_delay)))
-
-            # --- OSPF PROTOCOL DEAD TIMER MONITORING MATRICES ---
+            # --- AOSPF PROTOCOL DEAD TIMER MONITORING MATRICES ---
             for u in nodes:
                 for nbr in self.G.neighbors(u):
                     if adj_states[u][nbr] in ["INIT", "2WAY"]:
@@ -351,7 +324,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                             
                             # Fire updated corrective LSA metrics advertisements
                             lsa_seq[u] += 1
-                            active_nbrs = {k: get_current_cost(u, k, current_time) for k in self.G.neighbors(u) if adj_states[u][k] == "2WAY"}
+                            active_nbrs = {k: advertised_costs[u][k] for k in self.G.neighbors(u) if adj_states[u][k] == "2WAY"}
                             lsa_payload = {
                                 "router_id": u, "sequence_num": lsa_seq[u], "ttl": 64, "neighbors": active_nbrs
                             }
@@ -377,33 +350,51 @@ class OSPFAsynchronousWorkspaceDashboard:
                     if current_time > 0:
                         self.logs_database.append({
                             "time": current_time,
-                            "text": f"Periodic keepalive OSPF HELLO broadcast sent from Router {router} out of interfaces.",
+                            "text": f"Periodic keepalive AOSPF HELLO broadcast sent from Router {router} out of interfaces.",
                             "routers": [router],
                             "type": "hello_tx"
                         })
-                        self.router_events[router].append((current_time, "Sent periodic OSPF HELLO keepalive broadcast window frame out of interfaces.", "hello_tx"))
+                        self.router_events[router].append((current_time, "Sent periodic AOSPF HELLO keepalive broadcast window frame out of interfaces.", "hello_tx"))
                     
                     for nbr in self.G.neighbors(router):
                         delay = get_current_delay(router, nbr, current_time)
-                        event_queue.append((current_time + delay, "HELLO_ARRIVE", (router, nbr, list(active_neighbors), delay)))
+                        event_queue.append((current_time + delay, "HELLO_ARRIVE", (router, nbr, list(active_neighbors), delay, current_time)))
                     event_queue.append((current_time + self.hello_interval, "HELLO_SEND", (router,)))
 
                 elif ev_type == "HELLO_ARRIVE":
-                    sender, receiver, sender_neighbor_list, link_delay = data
+                    sender, receiver, sender_neighbor_list, link_delay, sent_time = data
                     if tuple(sorted((sender, receiver))) in broken_links:
                         continue 
                         
                     last_hello_time[receiver][sender] = current_time
                     
+                    # --- DYNAMIC COMPOSITE COST MATHEMATICAL EXTRACTION ENGINE ---
+                    measured_delay = current_time - sent_time
+                    base_cost = get_current_cost(receiver, sender, current_time)
+                    
+                    # Execute composite formula algebra pass
+                    temp_cost = math.ceil(self.w1 * (measured_delay / self.L_max) + self.w2 * base_cost)
+                    old_advertised_cost = advertised_costs[receiver][sender]
+                    
+                    # Detailed cost breakdown audit parameters logged natively inside the transmission log profile
+                    comparison_msg = (
+                        f"Cost Evaluation for link to {sender}: Measured Delay = {measured_delay}ms -> Temp Cost = {temp_cost} "
+                        f"(w1*L/Lmax + w2*C_base = {self.w1}*({measured_delay}/{self.L_max}) + {self.w2}*{base_cost}). "
+                        f"Previous Advertised Cost = {old_advertised_cost}."
+                    )
+                    self.router_events[receiver].append((current_time, comparison_msg, "hello_rx"))
+                    
                     if receiver in sender_neighbor_list:
                         if adj_states[receiver][sender] != "2WAY":
                             adj_states[receiver][sender] = "2WAY"
                             active_protocol_disruption = True 
+                            advertised_costs[receiver][sender] = temp_cost  # Initialize baseline metrics
+                            
                             self.router_events[receiver].append((current_time, f"Received reflective Hello from Router {sender}. Handshake complete: 2-WAY achieved.", "hello_rx"))
                             
                             lsa_triggered[receiver] = True
                             lsa_seq[receiver] += 1
-                            active_nbrs = {k: get_current_cost(receiver, k, current_time) for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
+                            active_nbrs = {k: advertised_costs[receiver][k] for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
                             lsa_payload = {
                                 "router_id": receiver, "sequence_num": lsa_seq[receiver], "ttl": 64, "neighbors": active_nbrs
                             }
@@ -422,7 +413,44 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 "routers": [sender, receiver],
                                 "type": "hello_rx"
                             })
-                            self.router_events[receiver].append((current_time, f"Received periodic HELLO keepalive from Router {sender}. Refreshed dead interval timer back to {self.dead_interval}ms.", "hello_rx"))
+                            
+                            # CRITICAL PROFILE EXPIRED THRESHOLD EVALUATION PASSTHRU (BI-DIRECTIONAL 40% Check)
+                            if temp_cost >= 1.4 * old_advertised_cost or temp_cost <= 0.6 * old_advertised_cost:
+                                active_protocol_disruption = True
+                                advertised_costs[receiver][sender] = temp_cost
+                                
+                                edge_key = tuple(sorted((sender, receiver)))
+                                t_change = 0
+                                for mod_edge, _, timestamp in self.delay_changes:
+                                    if mod_edge == edge_key and timestamp <= current_time:
+                                        t_change = max(t_change, timestamp)
+                                
+                                pending_cost_tracks.append({
+                                    "edge": edge_key,
+                                    "t_change": t_change,
+                                    "t_detection": current_time
+                                })
+                                
+                                change_direction = "increased" if temp_cost >= 1.4 * old_advertised_cost else "decreased"
+                                self.logs_database.append({
+                                    "time": current_time,
+                                    "text": f"📈 COST METRIC CHANGE: Dynamic metric cost to neighbor Router {sender} {change_direction} by >= 40% (New Cost: {temp_cost}, Old: {old_advertised_cost}). Dispatching triggered update LSA.",
+                                    "routers": [receiver, sender],
+                                    "type": "process"
+                                })
+                                self.router_events[receiver].append((current_time, f"Dynamic cost to Router {sender} hit trigger threshold (+/-40%). Issuing active link update LSA (Seq: {lsa_seq[receiver]+1}).", "db_update"))
+                                
+                                lsa_seq[receiver] += 1
+                                active_nbrs = {k: advertised_costs[receiver][k] for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
+                                lsa_payload = {
+                                    "router_id": receiver, "sequence_num": lsa_seq[receiver], "ttl": 64, "neighbors": active_nbrs
+                                }
+                                current_lsdb[receiver][receiver] = lsa_payload
+                                
+                                for nbr in self.G.neighbors(receiver):
+                                    if adj_states[receiver][nbr] == "2WAY":
+                                        link_prop_delay = get_current_delay(receiver, nbr, current_time)
+                                        event_queue.append((current_time + link_prop_delay, "LSA_ARRIVE", (receiver, nbr, lsa_payload, link_prop_delay)))
                     else:
                         if adj_states[receiver][sender] == "DOWN":
                             adj_states[receiver][sender] = "INIT"
@@ -431,7 +459,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                             t_resp_send = current_time + self.node_processing_delay
                             t_resp_arrive = t_resp_send + link_delay
                             reactive_neighbors = [k for k, v in adj_states[receiver].items() if v in ["INIT", "2WAY"]]
-                            event_queue.append((t_resp_arrive, "HELLO_ARRIVE", (receiver, sender, list(reactive_neighbors), link_delay)))
+                            event_queue.append((t_resp_arrive, "HELLO_ARRIVE", (receiver, sender, list(reactive_neighbors), link_delay, current_time)))
 
                 elif ev_type == "LSA_ARRIVE":
                     sender, receiver, incoming_payload, link_delay = data
@@ -488,7 +516,6 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 is_synchronized = False
                                 break
                                 
-            # RESTORATION SYMMETRY FIX: Evaluates accuracy against both dead links and hidden missing restored links
             is_physically_accurate = True
             for u, v in self.G.edges():
                 edge_tuple = tuple(sorted((u, v)))
@@ -507,13 +534,32 @@ class OSPFAsynchronousWorkspaceDashboard:
                 if not is_physically_accurate:
                     break
 
+            # Independent outside-sense dynamic delay cost discrepancy evaluation engine
+            is_delay_cost_discrepancy = False
+            for u_node, v_node in self.G.edges():
+                edge_tuple = tuple(sorted((u_node, v_node)))
+                if edge_tuple in broken_links:
+                    continue
+                l_delay = get_current_delay(u_node, v_node, current_time)
+                b_cost = get_current_cost(u_node, v_node, current_time)
+                true_cost = math.ceil(self.w1 * (l_delay / self.L_max) + self.w2 * b_cost)
+                
+                old_u = advertised_costs[u_node][v_node]
+                old_v = advertised_costs[v_node][u_node]
+                
+                if true_cost != old_u or true_cost != old_v:
+                    if (true_cost >= 1.4 * old_u or true_cost <= 0.6 * old_u) or (true_cost >= 1.4 * old_v or true_cost <= 0.6 * old_v):
+                        is_delay_cost_discrepancy = True
+                        break
+
             has_pending_lsas = any(ev[1] in ["LSA_ARRIVE", "LSA_PROCESS"] for ev in event_queue)
 
             if active_protocol_disruption or has_pending_lsas or not is_synchronized:
                 last_protocol_instability = current_time
             is_protocol_converged = (current_time > last_protocol_instability) and (len(operational_nodes) > 0)
 
-            if active_protocol_disruption or has_pending_lsas or not is_synchronized or not is_physically_accurate:
+            # Instability maps cost shifts as discrepancies in absolute reality pass bounds
+            if active_protocol_disruption or has_pending_lsas or not is_synchronized or not is_physically_accurate or is_delay_cost_discrepancy:
                 last_true_instability = current_time
             is_true_converged = (current_time > last_true_instability) and (len(operational_nodes) > 0)
 
@@ -522,13 +568,16 @@ class OSPFAsynchronousWorkspaceDashboard:
             if is_true_converged:
                 current_state_str = "GREEN"
             elif is_protocol_converged:
-                current_state_str = "YELLOW"
+                if is_delay_cost_discrepancy:
+                    current_state_str = "YELLOW_DELAY"
+                else:
+                    current_state_str = "YELLOW"
 
             if current_state_str != last_logged_state:
                 if current_state_str == "GREEN":
                     self.logs_database.append({
                         "time": current_time, 
-                        "text": f"⭐ OSPF NETWORK TOPOLOGY CONVERGENCE ACHIEVED! All local database maps are synchronized completely identical and accurate to physical wire states.", 
+                        "text": f"⭐ AOSPF NETWORK TOPOLOGY CONVERGENCE ACHIEVED! All local database maps are synchronized completely identical and accurate to physical wire states.", 
                         "routers": list(nodes), 
                         "type": "converged"
                     })
@@ -560,10 +609,34 @@ class OSPFAsynchronousWorkspaceDashboard:
                             })
                             pending_failure_tracks.remove(item)
 
+                    for item in list(pending_cost_tracks):
+                        t_change = item["t_change"]
+                        t_detection = item["t_detection"]
+                        duration_from_change = current_time - t_change
+                        duration_from_detection = current_time - t_detection
+                        u, v = item["edge"]
+                        
+                        msg = (
+                            f"📈 [Cost Metric Dynamic Shift Profile: Link {u} - {v}]\n"
+                            f"  • Total Time to Synchronize After Physical Delay Alteration (Outside Sense): {duration_from_change} ms (Altered at t={t_change} ms)\n"
+                            f"  • Time to Synchronize After Threshold Detection by Router: {duration_from_detection} ms (Detected at t={t_detection} ms)\n"
+                        )
+                        self.convergence_metrics_database.append({
+                            "time": current_time, "type": "DISRUPTION", "text": msg
+                        })
+                        pending_cost_tracks.remove(item)
+
+                elif current_state_str == "YELLOW_DELAY":
+                    self.logs_database.append({
+                        "time": current_time,
+                        "text": "AOSPF link delay cost discrepancy detected in outside sense (Awaiting Hello detection handshake).",
+                        "routers": list(nodes),
+                        "type": "process"
+                    })
                 elif current_state_str == "YELLOW":
                     self.logs_database.append({
                         "time": current_time,
-                        "text": "OSPF network state synchronized, but inaccurate to physical map (Topology discrepancy window active).",
+                        "text": "AOSPF network state synchronized, but inaccurate to physical map (Topology discrepancy window active).",
                         "routers": list(nodes),
                         "type": "process"
                     })
@@ -589,7 +662,9 @@ class OSPFAsynchronousWorkspaceDashboard:
                 "is_true_converged": is_true_converged,
                 "true_convergence_time": last_true_instability if is_true_converged else -1,
                 "get_delay_func": get_current_delay,
-                "get_cost_func":  get_current_cost
+                "get_cost_func":  get_current_cost,
+                "advertised_costs": {n: dict(advertised_costs[n]) for n in nodes},
+                "is_delay_cost_discrepancy": is_delay_cost_discrepancy
             }
             current_time += 1
 
@@ -616,10 +691,20 @@ class OSPFAsynchronousWorkspaceDashboard:
         config_box = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=5, pady=5)
         config_box.pack(fill=tk.X, pady=(0, 5))
         
-        tk.Label(config_box, text="OSPF Hello Interval Setup (ms):", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        self.hello_combo = ttk.Combobox(config_box, values=["1000", "2000", "3000", "5000"], state="readonly", width=8)
-        self.hello_combo.pack(side=tk.LEFT, padx=4)
+        tk.Label(config_box, text="Hello (ms):", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
+        self.hello_combo = ttk.Combobox(config_box, values=["1000", "2000", "3000", "5000"], state="readonly", width=5)
+        self.hello_combo.pack(side=tk.LEFT, padx=2)
         self.hello_combo.set("3000")
+
+        tk.Label(config_box, text="w1:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
+        self.w1_combo = ttk.Combobox(config_box, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
+        self.w1_combo.pack(side=tk.LEFT, padx=2)
+        self.w1_combo.set("10")
+
+        tk.Label(config_box, text="w2:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
+        self.w2_combo = ttk.Combobox(config_box, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
+        self.w2_combo.pack(side=tk.LEFT, padx=2)
+        self.w2_combo.set("1")
         
         self.start_btn = tk.Button(config_box, text="Start Simulation 🚀", font=("Helvetica", 9, "bold"), command=self.start_simulation, bg="#27ae60", fg="#ffffff", activebackground="#219653")
         self.start_btn.pack(side=tk.RIGHT, padx=4)
@@ -640,15 +725,6 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.delay_change_combo = ttk.Combobox(delay_admin_box, values=["2", "5", "8", "12", "15", "20", "25", "30", "40", "50"], state="disabled", width=8)
         self.delay_change_combo.pack(side=tk.RIGHT, padx=4)
         self.delay_change_combo.bind("<<ComboboxSelected>>", self.apply_runtime_delay_change)
-
-        # RUNTIME OSPF COST ADJUSTER
-        cost_admin_box = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=5, pady=5)
-        cost_admin_box.pack(fill=tk.X, pady=(0, 5))
-        tk.Label(cost_admin_box, text="Runtime OSPF Cost Override:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        
-        self.cost_change_combo = ttk.Combobox(cost_admin_box, values=["1", "2", "3", "4", "5", "10", "15", "20", "50", "100"], state="disabled", width=8)
-        self.cost_change_combo.pack(side=tk.RIGHT, padx=4)
-        self.cost_change_combo.bind("<<ComboboxSelected>>", self.apply_runtime_cost_change)
 
         # Playback navigation size selectors
         step_ctrl_box = tk.Frame(flood_frame)
@@ -747,7 +823,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.local_router_log_box.tag_config("dropped", foreground="#c0392b", font=("Helvetica", 9, "italic"))
         self.local_router_log_box.tag_config("db_update", foreground="#8e44ad", font=("Helvetica", 9, "bold"))
 
-        self.table_header_lbl = tk.Label(inspect_frame, text="OSPF Routing Table (Based on Learned LSAs): Router A", font=("Helvetica", 10, "bold"), fg="#1b5c8f")
+        self.table_header_lbl = tk.Label(inspect_frame, text="AOSPF Routing Table (Based on Learned LSAs): Router A", font=("Helvetica", 10, "bold"), fg="#1b5c8f")
         self.table_header_lbl.pack(anchor=tk.W, pady=(2, 2))
         table_container = tk.Frame(inspect_frame, bd=1, relief=tk.SOLID)
         table_container.pack(fill=tk.BOTH, expand=True)
@@ -759,7 +835,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         scrollbar_t.config(command=self.table_view_box.yview)
 
     def build_graph_canvas(self):
-        self.fig_f, self.ax_f = plt.subplots(figsize=(6, 8))
+        self.fig_f, self.ax_f = plt.subplots(figsize=(9, 7.5))
         self.canvas_f = FigureCanvasTkAgg(self.fig_f, master=self.right_column)
         self.canvas_f.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.fig_f.canvas.mpl_connect('button_press_event', self.on_graph_clicked)
@@ -836,27 +912,28 @@ class OSPFAsynchronousWorkspaceDashboard:
             width = 6.0 if is_selected else 1.5
             nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u, v)], edge_color=color, width=width, ax=self.ax_f)
             
-        nx.draw_networkx_nodes(self.G, self.node_positions, node_color=node_colors, node_size=800, edgecolors='#2c3e50', ax=self.ax_f)
+        nx.draw_networkx_nodes(self.G, self.node_positions, node_color=node_colors, node_size=400, edgecolors='#2c3e50', ax=self.ax_f)
         
         for name, (x, y) in self.node_positions.items():
             f_color = 'white' if name == self.selected_node else '#2c3e50'
-            self.ax_f.text(x, y, name, fontsize=12, fontweight='bold', ha='center', va='center', color=f_color)
+            self.ax_f.text(x, y, name, fontsize=10, fontweight='bold', ha='center', va='center', color=f_color)
 
-        edge_labels = {(u, v): f"bw:{d['bandwidth']}\ncost:{d['cost']}\n({d['delay']}ms)" for u, v, d in self.G.edges(data=True)}
-        nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=9, font_weight='bold', ax=self.ax_f)
+        edge_labels = {(u, v): f"C:{d['cost']}|{d['bandwidth'].replace('Mbps','M').replace('Gbps','G').replace('Kbps','K')}|{d['delay']}ms" for u, v, d in self.G.edges(data=True)}
+        nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=8, font_weight='bold', ax=self.ax_f, rotate=True, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='#b2bec3', alpha=0.85))
 
         self.fig_f.suptitle("")
-        self.ax_f.set_title("OSPF Network Topology — Configuration Mode", fontsize=12, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_title("AOSPF Network Topology — Configuration Mode", fontsize=10, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_xlim(-2, 20)
+        self.ax_f.set_ylim(-1, 19)
         self.ax_f.axis('off')
         self.canvas_f.draw()
 
         self.link_toggle_btn.config(text="Select a Link on Map", state="disabled", bg="#7f8c8d")
         self.delay_change_combo.config(state="disabled")
-        self.cost_change_combo.config(state="disabled")
         
         self.packet_header_lbl.config(text=f"LSA Packet Structure Data: Router {self.selected_node}")
         self.local_log_header_lbl.config(text=f"Contextual Local Port Transmissions Log for Router {self.selected_node}:")
-        self.table_header_lbl.config(text=f"OSPF Routing Table (Simulation Offline): Router {self.selected_node}")
+        self.table_header_lbl.config(text=f"AOSPF Routing Table (Simulation Offline): Router {self.selected_node}")
 
     # -------------------------------------------------------
     # ACTIVE RUNTIME ROUTING COMPILATION TREE
@@ -870,17 +947,12 @@ class OSPFAsynchronousWorkspaceDashboard:
         if self.selected_edge is None:
             self.link_toggle_btn.config(text="Select a Link on Map", state="disabled", bg="#7f8c8d")
             self.delay_change_combo.config(state="disabled")
-            self.cost_change_combo.config(state="disabled")
         else:
             u, v = self.selected_edge
             self.delay_change_combo.config(state="readonly")
-            self.cost_change_combo.config(state="readonly")
             
             current_delay_value = state["get_delay_func"](u, v, current_clock_time)
             self.delay_change_combo.set(str(current_delay_value))
-            
-            current_cost_value = state["get_cost_func"](u, v, current_clock_time)
-            self.cost_change_combo.set(str(current_cost_value))
             
             if self.selected_edge in state['broken_links']:
                 self.link_toggle_btn.config(text=f"Enable Link {u}-{v} 🟢", state="normal", bg="#27ae60", fg="#ffffff")
@@ -894,10 +966,16 @@ class OSPFAsynchronousWorkspaceDashboard:
                 bg="#d4edda", fg="#155724"
             )
         elif state["is_protocol_converged"]:
-            self.convergence_indicator_lbl.config(
-                text="🟡 Stable but Inaccurate", 
-                bg="#fff3cd", fg="#856404"
-            )
+            if state.get("is_delay_cost_discrepancy", False):
+                self.convergence_indicator_lbl.config(
+                    text="🟡 Stable but Inaccurate (Delay Cost Discrepancy)", 
+                    bg="#fff3cd", fg="#856404"
+                )
+            else:
+                self.convergence_indicator_lbl.config(
+                    text="🟡 Stable but Inaccurate", 
+                    bg="#fff3cd", fg="#856404"
+                )
         else:
             self.convergence_indicator_lbl.config(
                 text="⚠️ Syncing Map Data...", 
@@ -921,7 +999,7 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         self.packet_header_lbl.config(text=f"LSA Packet Structure Data: Router {target}")
         self.local_log_header_lbl.config(text=f"Contextual Local Port Transmissions Log for Router {target}:")
-        self.table_header_lbl.config(text=f"OSPF Routing Table ({current_clock_time} ms Database Snapshot): Router {target}")
+        self.table_header_lbl.config(text=f"AOSPF Routing Table ({current_clock_time} ms Database Snapshot): Router {target}")
         
         self.lsa_view_box.delete('1.0', tk.END)
         if target in known_lsas_payloads:
@@ -1057,31 +1135,34 @@ class OSPFAsynchronousWorkspaceDashboard:
                 
             nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u, v)], edge_color=color, width=width, style=style, ax=self.ax_f)
 
-        nx.draw_networkx_nodes(self.G, self.node_positions, node_color=node_colors, node_size=800, edgecolors='#2c3e50', ax=self.ax_f)
+        nx.draw_networkx_nodes(self.G, self.node_positions, node_color=node_colors, node_size=400, edgecolors='#2c3e50', ax=self.ax_f)
         for name, (x, y) in self.node_positions.items():
             f_color = 'white' if name == self.selected_node or len(state['lsdb'][name]) > 0 else '#2c3e50'
-            self.ax_f.text(x, y, name, fontsize=12, fontweight='bold', ha='center', va='center', color=f_color)
+            self.ax_f.text(x, y, name, fontsize=10, fontweight='bold', ha='center', va='center', color=f_color)
 
         edge_labels = {}
         for u, v, d in self.G.edges(data=True):
             edge_tuple = tuple(sorted((u, v)))
             if edge_tuple in state['broken_links']:
-                status_text = "TIMEOUT" if (state['adj_states'][u][v] == "DOWN" or state['adj_states'][v][u] == "DOWN") else "HOLDING"
+                status_text = "TO" if (state['adj_states'][u][v] == "DOWN" or state['adj_states'][v][u] == "DOWN") else "HD"
             else:
-                # OSPF cost lookup
-                active_cost_render = state["get_cost_func"](u, v, current_clock_time)
-                status_text = f"cost:{active_cost_render}"
+                # AOSPF cost lookup
+                active_cost_render = state["advertised_costs"][u][v]
+                status_text = f"C:{active_cost_render}"
                 
             active_delay_render = state["get_delay_func"](u, v, current_clock_time)
             bw = self.original_edges_data.get(tuple(sorted((u,v))), {}).get('bandwidth', '')
-            edge_labels[(u, v)] = f"{status_text}\nbw:{bw}\n({active_delay_render}ms)"
-        nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=9, font_weight='bold', ax=self.ax_f)
+            bw_short = bw.replace('Mbps','M').replace('Gbps','G').replace('Kbps','K')
+            edge_labels[(u, v)] = f"{status_text}|{bw_short}|{active_delay_render}ms"
+        nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=8, font_weight='bold', ax=self.ax_f, rotate=True, bbox=dict(boxstyle='round,pad=0.2', fc='white', ec='#b2bec3', alpha=0.85))
 
-        self.ax_f.set_title(f"Asynchronous OSPF Flooding Clock: {current_clock_time} ms", fontsize=12, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_title(f"Asynchronous AOSPF Flooding Clock: {current_clock_time} ms", fontsize=10, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_xlim(-2, 20)
+        self.ax_f.set_ylim(-1, 19)
         self.ax_f.axis('off')
         self.canvas_f.draw()
 
 if __name__ == '__main__':
     window_root = tk.Tk()
-    application = OSPFAsynchronousWorkspaceDashboard(window_root)
+    application = AOSPFAsynchronousWorkspaceDashboard(window_root)
     window_root.mainloop()
