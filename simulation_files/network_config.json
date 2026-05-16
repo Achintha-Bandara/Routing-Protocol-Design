@@ -1,0 +1,116 @@
+{
+  "network": {
+    "name": "Sample OSPF Network",
+    "description": "Example 6-router OSPF network topology",
+    "ensure_connectivity": true,
+    "version": "1.0"
+  },
+  "routers": [
+    {
+      "id": "R1",
+      "name": "Router 1 - Core",
+      "area": "0.0.0.0",
+      "region": "Central"
+    },
+    {
+      "id": "R2",
+      "name": "Router 2 - Branch A",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R7",
+      "name": "Router 7 - Branch A",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R3",
+      "name": "Router 3 - Branch B",
+      "area": "0.0.0.0",
+      "region": "East"
+    },
+    {
+      "id": "R4",
+      "name": "Router 4 - Branch C",
+      "area": "0.0.0.0",
+      "region": "South"
+    },
+    {
+      "id": "R5",
+      "name": "Router 5 - Branch D",
+      "area": "0.0.0.0",
+      "region": "West"
+    },
+    {
+      "id": "R6",
+      "name": "Router 6 - Remote",
+      "area": "0.0.0.0",
+      "region": "Remote"
+    }
+  ],
+  "links": [
+    {
+      "from": "R1",
+      "to": "R2",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Core to Branch A"
+    },{
+      "from": "R7",
+      "to": "R4",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Core to Branch A"
+    },
+    {
+      "from": "R1",
+      "to": "R3",
+      "cost": 5,
+      "bandwidth": "100Mbps",
+      "description": "Core to Branch B"
+    },
+    {
+      "from": "R2",
+      "to": "R3",
+      "cost": 1,
+      "bandwidth": "1Gbps",
+      "description": "Branch A to Branch B"
+    },
+    {
+      "from": "R2",
+      "to": "R4",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Branch A to Branch C"
+    },
+    {
+      "from": "R3",
+      "to": "R5",
+      "cost": 3,
+      "bandwidth": "100Mbps",
+      "description": "Branch B to Branch D"
+    },
+    {
+      "from": "R4",
+      "to": "R5",
+      "cost": 1,
+      "bandwidth": "1Gbps",
+      "description": "Branch C to Branch D"
+    },
+    {
+      "from": "R4",
+      "to": "R6",
+      "cost": 4,
+      "bandwidth": "10Mbps",
+      "description": "Branch C to Remote"
+    },
+    {
+      "from": "R5",
+      "to": "R6",
+      "cost": 2,
+      "bandwidth": "100Mbps",
+      "description": "Branch D to Remote"
+    }
+  ]
+}
