@@ -1,0 +1,40 @@
+{
+  "name": "Complex 10-Router Mesh Topology",
+  "event": {
+    "type": "link_weight_change",
+    "edge": ["R3", "R8"],
+    "new_weight": 15
+  },
+  "nodes": [
+    {"id": "R1"},
+    {"id": "R2"},
+    {"id": "R3"},
+    {"id": "R4"},
+    {"id": "R5"},
+    {"id": "R6"},
+    {"id": "R7"},
+    {"id": "R8"},
+    {"id": "R9"},
+    {"id": "R10"}
+  ],
+  "edges": [
+    {"source": "R1", "target": "R2", "weight": 4, "delay": 1.0},
+    {"source": "R2", "target": "R3", "weight": 3, "delay": 1.1},
+    {"source": "R3", "target": "R4", "weight": 2, "delay": 0.9},
+    {"source": "R4", "target": "R5", "weight": 5, "delay": 1.2},
+    {"source": "R5", "target": "R6", "weight": 3, "delay": 1.0},
+    {"source": "R6", "target": "R7", "weight": 4, "delay": 1.3},
+    {"source": "R7", "target": "R8", "weight": 2, "delay": 0.8},
+    {"source": "R8", "target": "R9", "weight": 3, "delay": 1.1},
+    {"source": "R9", "target": "R10", "weight": 4, "delay": 1.2},
+    {"source": "R10", "target": "R1", "weight": 5, "delay": 1.4},
+    {"source": "R1", "target": "R5", "weight": 6, "delay": 1.5},
+    {"source": "R2", "target": "R6", "weight": 5, "delay": 1.0},
+    {"source": "R3", "target": "R8", "weight": 7, "delay": 1.6},
+    {"source": "R4", "target": "R9", "weight": 6, "delay": 1.3},
+    {"source": "R5", "target": "R10", "weight": 5, "delay": 1.2},
+    {"source": "R2", "target": "R7", "weight": 4, "delay": 0.9},
+    {"source": "R6", "target": "R9", "weight": 7, "delay": 1.4},
+    {"source": "R3", "target": "R10", "weight": 8, "delay": 1.5}
+  ]
+}
