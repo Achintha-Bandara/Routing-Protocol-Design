@@ -1,23 +1,21 @@
-# OSPF vs FALP Protocol Comparison
+# Protocol Performance Comparison
 
-This project simulates an OSPF-like baseline and a proposed faster link-state protocol called FALP (Fast Adaptive Link-state Protocol).
+This module provides a side-by-side performance analysis between standard OSPF and the proposed AOSPF/FALP implementations.
 
-The comparison is topology-driven. Edit [topology.json](topology.json) and rerun the app; the charts, timing, and report update from the changed topology automatically.
+## Overview
+Unlike the standalone visualizers in `simulation_files/`, this suite is designed for **benchmarking**. It runs simulations across identical topologies and generates comparative charts.
 
-## What FALP changes
+## Core Components
+- **`main.py`**: The entry point to launch the benchmarking GUI.
+- **`protocol_sim/`**: contains the protocol logic tailored for comparative measurement.
+- **`topology.json`**: The default network structure for testing.
 
-- It limits flooding to the impacted neighborhood instead of the full routing domain.
-- It uses incremental recomputation instead of rebuilding the full SPF tree everywhere.
-- It keeps unaffected routers out of the recovery path, which lowers message and CPU cost.
-
-## Trade-offs
-
-- Faster convergence and lower control overhead.
-- More complexity in locality detection and state tracking.
-- Harder to standardize and debug than a plain OSPF-style design.
-
-## Run
-
+## How to Run
 ```bash
 python main.py
 ```
+
+## Key Metrics Tracked
+- **Convergence Time**: Time taken for the network to reach a stable state after a failure.
+- **Message Overhead**: Total number of protocol packets exchanged.
+- **CPU Load / Complexity**: Estimated cost of SPF recomputations.
