@@ -26,14 +26,17 @@ class OSPFEngine:
             Dictionary with routing table
         """
         try:
-            shortest_paths = nx.single_source_dijkstra_path_length(
-                graph, source_router, weight='weight'
-            )
+            lengths, paths = nx.single_source_dijkstra(graph, source_router, weight='weight')
+            table = {}
+            for dest in lengths:
+                if dest == source_router: continue
+                next_hop = paths[dest][1] if len(paths[dest]) > 1 else dest
+                table[dest] = {'cost': lengths[dest], 'next_hop': next_hop}
             
-            self.routing_tables[source_router] = shortest_paths
-            self.add_convergence_log(f"SPF calculated for {source_router}: {len(shortest_paths)} routes")
+            self.routing_tables[source_router] = table
+            self.add_convergence_log(f"SPF calculated for {source_router}: {len(table)} routes")
             
-            return shortest_paths
+            return table
         except nx.NetworkXError as e:
             error_msg = f"Error calculating routes from {source_router}: {str(e)}"
             self.add_convergence_log(error_msg)
@@ -75,14 +78,11 @@ class OSPFEngine:
         """Clear convergence log"""
         self.convergence_log = []
     
-    def estimate_convergence_time(self, graph):
+    def estimate_convergence_time(self, graph, is_reconvergence=False):
         """
         Estimate OSPF convergence time based on network topology.
-        OSPF convergence factors:
-        - LSA flooding: ~1ms per hop
-        - SPF calculation: O(n^2) but typically <100ms
-        - HELLO interval: 10 seconds default, but we simulate optimized network
-        Real-world: 1-3 seconds for typical networks
+        Calculates real-world values using Carrier Delay, LSA generation/flooding,
+        SPF computation (O(E log V)), and Wait timers.
         """
         if graph.number_of_nodes() == 0:
             return 0.0
@@ -90,20 +90,44 @@ class OSPFEngine:
         try:
             if graph.number_of_nodes() == 1:
                 diameter = 0
-            elif graph.is_connected():
-                diameter = len(list(graph.nodes())) - 1
+            elif nx.is_connected(graph):
+                diameter = nx.diameter(graph)
             else:
                 diameters = []
                 for component in nx.connected_components(graph):
                     subgraph = graph.subgraph(component)
                     if subgraph.number_of_nodes() > 1:
-                        diameters.append(len(list(subgraph.nodes())) - 1)
+                        diameters.append(nx.diameter(subgraph))
                 diameter = max(diameters) if diameters else 0
         except:
             diameter = graph.number_of_nodes() - 1
+            
+        import math
+        import random
         
-        convergence_time = 0.5 + (diameter * 0.1) + 0.5
-        return round(min(convergence_time, 3.0), 3)
+        nodes = graph.number_of_nodes()
+        edges = graph.number_of_edges()
+        
+        if not is_reconvergence:
+            # Initial Startup (DR/BDR Election Wait Timer = 40s, Hello Exchange)
+            base_startup = 40.0
+            db_exchange = (edges * 0.05) + (nodes * 0.1)
+            time_sec = base_startup + db_exchange
+        else:
+            # Re-convergence
+            carrier_delay = 0.050         # 50ms Link fault detection
+            lsa_gen_delay = 0.050         # 50ms LSA generation 
+            lsa_flood = diameter * 0.001  # 1ms per hop
+            spf_delay = 0.050             # 50ms initial SPF throttle timer
+            spf_calc = (edges * math.log(nodes + 1 if nodes > 0 else 2)) * 0.0001
+            fib_update = nodes * 0.0001
+            
+            time_sec = carrier_delay + lsa_gen_delay + lsa_flood + spf_delay + spf_calc + fib_update
+            
+        # Add 5% jitter to simulate real network variations
+        time_sec *= random.uniform(0.95, 1.05)
+        
+        return round(time_sec, 3)
     
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""

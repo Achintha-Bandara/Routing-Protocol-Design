@@ -1,4 +1,4 @@
-﻿"""
+"""
 Protocol Simulator - Main Entry Point
 Supports OSPF, BGP, IS-IS, and RIP protocols
 Automatically reloads network topology when JSON configuration file changes
@@ -223,8 +223,18 @@ class ProtocolSimulator:
         try:
             # Load new configuration
             if not self.load_configuration():
+                self.updating = False
                 return
             
+            # Schedule UI update on main thread
+            self.root.after(0, self._perform_ui_update)
+        except Exception as e:
+            print(f"[ERROR] Error reloading network: {e}")
+            self.updating = False
+    
+    def _perform_ui_update(self):
+        """Perform UI update on main thread (called via root.after)"""
+        try:
             # Update UI (which will also update graph)
             self.update_ui()
             
@@ -240,7 +250,7 @@ class ProtocolSimulator:
                                     "Network topology has been reloaded from JSON file")
                 print("[OK] Network topology reloaded successfully")
         except Exception as e:
-            print(f"[ERROR] Error reloading network: {e}")
+            print(f"[ERROR] Error updating UI: {e}")
             if self.ui:
                 self.ui.show_message("Error", f"Failed to reload network: {e}", "error")
         finally:
@@ -257,7 +267,12 @@ class ProtocolSimulator:
         
         # Bind button clicks
         self.ui.run_ospf_btn.config(command=self.run_protocol)
+        self.ui.fail_link_btn.config(command=self.fail_link)
+        self.ui.recover_link_btn.config(command=self.recover_link)
         self.ui.router_listbox.bind('<<ListboxSelect>>', self.on_router_select)
+        
+        # Track failed links
+        self.failed_links = set()
     
     def update_ui(self):
         """Update UI with current configuration"""
@@ -280,6 +295,18 @@ class ProtocolSimulator:
         self.ui.source_combo['values'] = router_ids
         if router_ids:
             self.ui.source_combo.current(0)
+        
+        # Update link combo
+        links = self.config.get('links', [])
+        link_names = [f"{link['from']}-{link['to']}" for link in links]
+        self.ui.link_combo['values'] = link_names
+        if link_names:
+            self.ui.link_combo.current(0)
+        
+        # Reset failed links when topology is reloaded
+        self.failed_links = set()
+        self.ui.fail_link_btn.config(state="normal")
+        self.ui.recover_link_btn.config(state="disabled")
     
     def run_protocol(self):
         """Run selected protocol routing calculation and animate"""
@@ -297,7 +324,9 @@ class ProtocolSimulator:
             protocol_info = self.protocol_engine.get_protocol_info()
             
             # Estimate convergence time based on topology
-            estimated_time = self.protocol_engine.estimate_convergence_time(self.graph)
+            is_recon = getattr(self, 'has_converged_once', False)
+            estimated_time = self.protocol_engine.estimate_convergence_time(self.graph, is_reconvergence=is_recon)
+            self.has_converged_once = True
             self.ui.update_estimated_convergence_time(estimated_time)
             
             self.ui.update_status(f"Calculating {PROTOCOL_NAME.upper()} routes ({protocol_info['convergence_desc']})...", "#f39c12")
@@ -324,10 +353,9 @@ class ProtocolSimulator:
             for entry in log[-5:]:
                 print(f"  {entry}")
             
-            # Update status with timing
-            status_msg = f"[OK] {PROTOCOL_NAME.upper()} calculated from {source_router} | Time: {elapsed_time:.3f}s"
+            # Update status
+            status_msg = f"[OK] {PROTOCOL_NAME.upper()} calculated from {source_router}"
             self.ui.update_status(status_msg, "#27ae60")
-            self.ui.update_calculation_time(elapsed_time)
             
             # Auto-animate after calculation with protocol-specific animation
             self._start_animation_after_delay(source_router, protocol_info)
@@ -338,12 +366,7 @@ class ProtocolSimulator:
     
     def _start_animation_after_delay(self, source_router, protocol_info):
         """Start protocol-specific animation after a short delay"""
-        def animate():
-            time.sleep(0.5)  # Brief pause before animation
-            self._animate_protocol_messages(source_router, protocol_info)
-        
-        thread = threading.Thread(target=animate, daemon=True)
-        thread.start()
+        self.root.after(500, self._animate_protocol_messages, source_router, protocol_info)
     
     def _animate_protocol_messages(self, source_router, protocol_info):
         """Animate protocol-specific messages from selected source router"""
@@ -355,15 +378,109 @@ class ProtocolSimulator:
             return
         
         # Update status before animation
-        message_type = protocol_info.get('message_type', 'Messages')
+        message_type = 'Shortest Path Tree'
         self.ui.update_status(
-            f"{PROTOCOL_NAME.upper()} Animation: {message_type} spreading on links...", 
+            f"{PROTOCOL_NAME.upper()} Animation: Displaying {message_type}...", 
             "#3498db"
         )
         
         # Pass protocol info to animation
         self.ui.animate_protocol_on_topology(self.graph, routers, source_router, protocol_info)
-        self.ui.update_status(f"{PROTOCOL_NAME.upper()} Animation: Red packets spreading on links...", "#3498db")
+        self.ui.update_status(f"{PROTOCOL_NAME.upper()} Animation: Displaying shortest paths...", "#3498db")
+    
+    def fail_link(self):
+        """Fail a selected link in the network"""
+        link_name = self.ui.link_combo.get()
+        if not link_name:
+            self.ui.show_message("Warning", "Please select a link first", "warning")
+            return
+        
+        # Parse link name (e.g., "R1-R2")
+        parts = link_name.split("-")
+        if len(parts) != 2:
+            return
+        
+        router1, router2 = parts[0].strip(), parts[1].strip()
+        
+        try:
+            # Remove edge from graph
+            if self.graph.has_edge(router1, router2):
+                self.graph.remove_edge(router1, router2)
+                # Store normalized edge tuple
+                r1, r2 = min(router1, router2), max(router1, router2)
+                self.failed_links.add((r1, r2))
+                
+                # Update UI
+                self.ui.draw_topology(self.graph, recalculate_pos=False)
+                self.ui.update_status(f"Link {link_name} FAILED", "#e74c3c")
+                self.ui.recover_link_btn.config(state="normal")
+                
+                # Recalculate routes
+                protocol_info = self.protocol_engine.get_protocol_info()
+                estimated_time = self.protocol_engine.estimate_convergence_time(self.graph, is_reconvergence=True)
+                self.has_converged_once = True
+                self.ui.update_estimated_convergence_time(estimated_time)
+                
+                all_routing_tables = self.protocol_engine.calculate_all_routing_tables(self.graph)
+                self.all_routing_tables = all_routing_tables
+                
+                print(f"[LINK FAILURE] {link_name} removed from topology")
+            else:
+                self.ui.show_message("Error", f"Link {link_name} not found in topology", "error")
+        except Exception as e:
+            self.ui.show_message("Error", f"Error failing link: {e}", "error")
+    
+    def recover_link(self):
+        """Recover a failed link in the network"""
+        if not self.failed_links:
+            self.ui.show_message("Info", "No failed links to recover", "warning")
+            return
+        
+        link_name = self.ui.link_combo.get()
+        if not link_name:
+            return
+            
+        parts = link_name.split("-")
+        if len(parts) != 2:
+            return
+            
+        router1, router2 = parts[0].strip(), parts[1].strip()
+        r1, r2 = min(router1, router2), max(router1, router2)
+        
+        if (r1, r2) not in self.failed_links:
+            self.ui.show_message("Info", f"Link {link_name} is not currently failed", "warning")
+            return
+            
+        try:
+            # Find the original edge data
+            cost = 1
+            for link in self.config.get('links', []):
+                if (link['from'] == router1 and link['to'] == router2) or \
+                   (link['from'] == router2 and link['to'] == router1):
+                    cost = link.get('cost', 1)
+                    break
+                    
+            self.graph.add_edge(router1, router2, weight=cost)
+            self.failed_links.remove((r1, r2))
+            
+            # Update UI
+            self.ui.draw_topology(self.graph, recalculate_pos=False)
+            self.ui.update_status(f"Link {link_name} RECOVERED", "#27ae60")
+            if not self.failed_links:
+                self.ui.recover_link_btn.config(state="disabled")
+            
+            # Recalculate routes
+            protocol_info = self.protocol_engine.get_protocol_info()
+            estimated_time = self.protocol_engine.estimate_convergence_time(self.graph, is_reconvergence=True)
+            self.has_converged_once = True
+            self.ui.update_estimated_convergence_time(estimated_time)
+            
+            all_routing_tables = self.protocol_engine.calculate_all_routing_tables(self.graph)
+            self.all_routing_tables = all_routing_tables
+            
+            print(f"[LINK RECOVERY] {link_name} restored to topology")
+        except Exception as e:
+            self.ui.show_message("Error", f"Error recovering link: {e}", "error")
     
     def on_router_select(self, event):
         """Handle router selection in listbox"""

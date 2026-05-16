@@ -1,0 +1,440 @@
+{
+  "network": {
+    "name": "Network",
+    "description": "Scale 20-router OSPF mesh network topology with full connectivity",
+    "ensure_connectivity": true,
+    "version": "2.0"
+  },
+  "routers": [
+    {
+      "id": "R1",
+      "name": "Router 1 - Core",
+      "area": "0.0.0.0",
+      "region": "Central"
+    },
+    {
+      "id": "R2",
+      "name": "Router 2 - Core",
+      "area": "0.0.0.0",
+      "region": "Central"
+    },
+    {
+      "id": "R3",
+      "name": "Router 3 - Aggregation",
+      "area": "0.0.0.0",
+      "region": "East"
+    },
+    {
+      "id": "R4",
+      "name": "Router 4 - Aggregation",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R5",
+      "name": "Router 5 - Aggregation",
+      "area": "0.0.0.0",
+      "region": "South"
+    },
+    {
+      "id": "R6",
+      "name": "Router 6 - Edge",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R7",
+      "name": "Router 7 - Branch A",
+      "area": "0.0.0.0",
+      "region": "Southeast"
+    },
+    {
+      "id": "R8",
+      "name": "Router 8 - Edge",
+      "area": "0.0.0.0",
+      "region": "Northwest"
+    },
+    {
+      "id": "R9",
+      "name": "Router 9 - Branch A",
+      "area": "0.0.0.0",
+      "region": "Southeast"
+    },
+    {
+      "id": "R10",
+      "name": "Router 10 - DataCenter",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R11",
+      "name": "Router 11 - Edge",
+      "area": "0.0.0.0",
+      "region": "East"
+    },
+    {
+      "id": "R12",
+      "name": "Router 12 - DataCenter",
+      "area": "0.0.0.0",
+      "region": "Northwest"
+    },
+    {
+      "id": "R13",
+      "name": "Router 13 - Edge",
+      "area": "0.0.0.0",
+      "region": "Southwest"
+    },
+    {
+      "id": "R14",
+      "name": "Router 14 - DataCenter",
+      "area": "0.0.0.0",
+      "region": "Southeast"
+    },
+    {
+      "id": "R15",
+      "name": "Router 15 - Edge",
+      "area": "0.0.0.0",
+      "region": "West"
+    },
+    {
+      "id": "R16",
+      "name": "Router 16 - Branch C",
+      "area": "0.0.0.0",
+      "region": "North"
+    },
+    {
+      "id": "R17",
+      "name": "Router 17 - Branch C",
+      "area": "0.0.0.0",
+      "region": "South"
+    },
+    {
+      "id": "R18",
+      "name": "Router 18 - Branch A",
+      "area": "0.0.0.0",
+      "region": "Southwest"
+    },
+    {
+      "id": "R19",
+      "name": "Router 19 - Edge",
+      "area": "0.0.0.0",
+      "region": "Northwest"
+    },
+    {
+      "id": "R20",
+      "name": "Router 20 - Remote Gateway",
+      "area": "0.0.0.0",
+      "region": "Remote"
+    }
+  ],
+  "links": [
+    {
+      "from": "R1",
+      "to": "R2",
+      "cost": 2,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R1",
+      "to": "R10",
+      "cost": 1,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R10",
+      "to": "R6",
+      "cost": 2,
+      "bandwidth": "100Mbps",
+      "description": "Inter-router Link between R10 and R6"
+    },
+    {
+      "from": "R1",
+      "to": "R3",
+      "cost": 1,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R2",
+      "to": "R8",
+      "cost": 1,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R3",
+      "to": "R9",
+      "cost": 5,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R3 and R9"
+    },
+    {
+      "from": "R6",
+      "to": "R17",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R6 and R17"
+    },
+    {
+      "from": "R10",
+      "to": "R20",
+      "cost": 5,
+      "bandwidth": "100Mbps",
+      "description": "Inter-router Link between R10 and R20"
+    },
+    {
+      "from": "R3",
+      "to": "R7",
+      "cost": 3,
+      "bandwidth": "100Mbps",
+      "description": "Inter-router Link between R3 and R7"
+    },
+    {
+      "from": "R2",
+      "to": "R5",
+      "cost": 2,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R2",
+      "to": "R15",
+      "cost": 2,
+      "bandwidth": "10Gbps",
+      "description": "Core Backbone Link"
+    },
+    {
+      "from": "R7",
+      "to": "R14",
+      "cost": 2,
+      "bandwidth": "100Mbps",
+      "description": "Inter-router Link between R7 and R14"
+    },
+    {
+      "from": "R20",
+      "to": "R4",
+      "cost": 5,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R20 and R4"
+    },
+    {
+      "from": "R20",
+      "to": "R13",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R20 and R13"
+    },
+    {
+      "from": "R15",
+      "to": "R11",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R15 and R11"
+    },
+    {
+      "from": "R7",
+      "to": "R12",
+      "cost": 3,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R7 and R12"
+    },
+    {
+      "from": "R14",
+      "to": "R18",
+      "cost": 5,
+      "bandwidth": "100Mbps",
+      "description": "Inter-router Link between R14 and R18"
+    },
+    {
+      "from": "R8",
+      "to": "R19",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R8 and R19"
+    },
+    {
+      "from": "R20",
+      "to": "R16",
+      "cost": 3,
+      "bandwidth": "1Gbps",
+      "description": "Inter-router Link between R20 and R16"
+    },
+    {
+      "from": "R6",
+      "to": "R15",
+      "cost": 3,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R9",
+      "to": "R18",
+      "cost": 5,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R2",
+      "to": "R11",
+      "cost": 3,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R7",
+      "to": "R19",
+      "cost": 6,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R16",
+      "to": "R13",
+      "cost": 7,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R9",
+      "to": "R5",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R9",
+      "to": "R19",
+      "cost": 7,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R12",
+      "to": "R8",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R17",
+      "to": "R16",
+      "cost": 4,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R4",
+      "to": "R5",
+      "cost": 1,
+      "bandwidth": "10Gbps",
+      "description": "High-Speed Core Mesh Link"
+    },
+    {
+      "from": "R14",
+      "to": "R20",
+      "cost": 4,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R15",
+      "to": "R17",
+      "cost": 6,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R4",
+      "to": "R18",
+      "cost": 6,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R4",
+      "to": "R10",
+      "cost": 3,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R1",
+      "to": "R9",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R17",
+      "to": "R20",
+      "cost": 5,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R12",
+      "to": "R6",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R17",
+      "to": "R1",
+      "cost": 6,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R1",
+      "to": "R4",
+      "cost": 2,
+      "bandwidth": "10Gbps",
+      "description": "High-Speed Core Mesh Link"
+    },
+    {
+      "from": "R10",
+      "to": "R8",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R16",
+      "to": "R3",
+      "cost": 5,
+      "bandwidth": "100Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R16",
+      "to": "R18",
+      "cost": 5,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R18",
+      "to": "R7",
+      "cost": 6,
+      "bandwidth": "10Mbps",
+      "description": "Peripheral Backup Path"
+    },
+    {
+      "from": "R12",
+      "to": "R15",
+      "cost": 4,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    },
+    {
+      "from": "R15",
+      "to": "R4",
+      "cost": 2,
+      "bandwidth": "1Gbps",
+      "description": "Distribution Redundant Path"
+    }
+  ]
+}

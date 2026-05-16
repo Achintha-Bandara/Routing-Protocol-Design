@@ -115,19 +115,31 @@ class OSPFSimulatorUI:
                                       cursor="hand2", padx=5, pady=10)
         self.run_ospf_btn.pack(pady=10, padx=10, fill=tk.X)
         
-        # Calculation time display
-        tk.Label(control_frame, text="Calculation Time:", font=("Arial", 9, "bold"),
-                bg="white").pack(pady=(10, 0), padx=10, anchor="w")
-        self.calc_time_label = tk.Label(control_frame, text="Not calculated", font=("Arial", 9),
-                                       bg="#ecf0f1", fg="#27ae60", padx=10, pady=5)
-        self.calc_time_label.pack(fill=tk.X, padx=10, pady=5)
-        
-        # Estimated convergence time display
-        tk.Label(control_frame, text="Est. Convergence:", font=("Arial", 9, "bold"),
+        # Convergence time display
+        tk.Label(control_frame, text="Convergence Time:", font=("Arial", 9, "bold"),
                 bg="white").pack(pady=(10, 0), padx=10, anchor="w")
         self.est_time_label = tk.Label(control_frame, text="--", font=("Arial", 9),
                                        bg="#ecf0f1", fg="#e74c3c", padx=10, pady=5)
         self.est_time_label.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Link failure control section
+        tk.Label(control_frame, text="Link Control:", font=("Arial", 10, "bold"),
+                bg="white").pack(pady=(15, 0), padx=10, anchor="w")
+        
+        self.link_combo = ttk.Combobox(control_frame, state="readonly", width=20)
+        self.link_combo.pack(pady=5, padx=10)
+        
+        # Fail link button
+        self.fail_link_btn = tk.Button(control_frame, text="✕ Fail Link",
+                                       bg="#e74c3c", fg="white", font=("Arial", 10, "bold"),
+                                       cursor="hand2", padx=5, pady=8)
+        self.fail_link_btn.pack(pady=5, padx=10, fill=tk.X)
+        
+        # Recover link button
+        self.recover_link_btn = tk.Button(control_frame, text="✓ Recover Link",
+                                          bg="#27ae60", fg="white", font=("Arial", 10, "bold"),
+                                          cursor="hand2", padx=5, pady=8, state="disabled")
+        self.recover_link_btn.pack(pady=5, padx=10, fill=tk.X)
         
         # Info section
         tk.Label(control_frame, text="Network Information", font=("Arial", 10, "bold"),
@@ -212,13 +224,14 @@ Routers:
         info_text.insert(tk.END, info)
         info_text.config(state="disabled")
     
-    def draw_topology(self, graph):
+    def draw_topology(self, graph, recalculate_pos=True):
         """Draw network topology graph with animation support"""
         if not graph or len(graph.nodes()) == 0:
             return
         
         # Store graph position for animation
-        self.graph_pos = nx.spring_layout(graph, k=2, iterations=50, seed=42)
+        if recalculate_pos or not hasattr(self, 'graph_pos') or self.graph_pos is None:
+            self.graph_pos = nx.spring_layout(graph, k=2, iterations=50, seed=42)
         self.graph_edges = list(graph.edges(data=True))
         self.animated_links = set()  # Reset animated links
         
@@ -259,189 +272,44 @@ Routers:
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
     
     def animate_protocol_on_topology(self, graph, routers, source_router=None, protocol_info=None):
-        """Animate protocol-specific messages spreading through network"""
+        """Animate shortest path tree from source router"""
         if not self.graph_pos or not protocol_info:
             return
         
         self.animated_packets = []
-        animation_type = protocol_info.get('animation_type', 'hello')
         
         if source_router and source_router in graph.nodes():
-            from collections import deque
-            
-            if animation_type == 'hello':
-                # OSPF: Simultaneous HELLO flooding to all neighbors
-                visited = set()
-                queue = deque([(source_router, 0)])
-                visited.add(source_router)
-                wave = 0
+            try:
+                # Calculate shortest paths
+                paths = nx.shortest_path(graph, source=source_router, weight='weight')
+                distances = nx.single_source_shortest_path_length(graph, source_router)
                 
-                while queue:
-                    wave_routers = list(queue)
-                    queue.clear()
-                    
-                    for current_router, distance in wave_routers:
-                        for neighbor in graph.neighbors(current_router):
-                            if neighbor not in visited:
-                                visited.add(neighbor)
-                                queue.append((neighbor, distance + 1))
-                                
-                                # OSPF: Simultaneous wave propagation
-                                # All neighbors at same distance get packets at same time
-                                self.animated_packets.append({
-                                    'start': current_router,
-                                    'end': neighbor,
-                                    'offset': wave * 0.6,  # Wave-based timing
-                                    'progress': -1,
-                                    'duration': 0.8
-                                })
-                                self.animated_packets.append({
-                                    'start': neighbor,
-                                    'end': current_router,
-                                    'offset': wave * 0.6 + 0.4,
-                                    'progress': -1,
-                                    'duration': 0.8
-                                })
-                    wave += 1
-            
-            elif animation_type == 'update':
-                # BGP: Slow, selective path-based propagation with policy
-                visited = set()
-                queue = deque([(source_router, 0)])
-                visited.add(source_router)
-                offset_counter = 0
+                # Extract all edges that form the shortest path tree
+                tree_edges = set()
+                for target, path in paths.items():
+                    for i in range(len(path)-1):
+                        tree_edges.add((path[i], path[i+1]))
                 
-                while queue:
-                    current_router, distance = queue.popleft()
-                    neighbors = list(graph.neighbors(current_router))
-                    
-                    for idx, neighbor in enumerate(neighbors):
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            queue.append((neighbor, distance + 1))
-                            
-                            # BGP: Selective, slower propagation (policy-driven)
-                            # Each UPDATE follows specific path
-                            self.animated_packets.append({
-                                'start': current_router,
-                                'end': neighbor,
-                                'offset': offset_counter * 0.5 + (idx * 0.15),  # Staggered within wave
-                                'progress': -1,
-                                'duration': 1.8  # Slower than OSPF
-                            })
-                            self.animated_packets.append({
-                                'start': neighbor,
-                                'end': current_router,
-                                'offset': offset_counter * 0.5 + (idx * 0.15) + 0.9,
-                                'progress': -1,
-                                'duration': 1.8
-                            })
-                    
-                    offset_counter += 1
-            
-            elif animation_type == 'distance_vector':
-                # RIP: Sequential hop-by-hop distribution (very slow)
-                visited = set()
-                queue = deque([(source_router, 0)])
-                visited.add(source_router)
-                hop_counter = 0
-                
-                while queue:
-                    current_router, distance = queue.popleft()
-                    neighbors = list(graph.neighbors(current_router))
-                    
-                    for neighbor in neighbors:
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            queue.append((neighbor, distance + 1))
-                            
-                            # RIP: Very slow hop-by-hop (periodic updates)
-                            # Each hop takes significant time (simulating 30-second RIP timers)
-                            self.animated_packets.append({
-                                'start': current_router,
-                                'end': neighbor,
-                                'offset': hop_counter * 0.7,  # Longer delays between hops
-                                'progress': -1,
-                                'duration': 2.0  # Slowest
-                            })
-                            self.animated_packets.append({
-                                'start': neighbor,
-                                'end': current_router,
-                                'offset': hop_counter * 0.7 + 1.0,
-                                'progress': -1,
-                                'duration': 2.0
-                            })
-                    
-                    hop_counter += 1
-            
-            elif animation_type == 'lsp':
-                # IS-IS: Level-based flooding (L2 first, then L1)
-                visited_l2 = set()
-                visited_l1 = set()
-                
-                # Phase 1: L2 (backbone) flooding
-                queue_l2 = deque([(source_router, 0)])
-                visited_l2.add(source_router)
-                offset_counter = 0
-                
-                while queue_l2:
-                    current_router, distance = queue_l2.popleft()
-                    for neighbor in graph.neighbors(current_router):
-                        if neighbor not in visited_l2:
-                            visited_l2.add(neighbor)
-                            queue_l2.append((neighbor, distance + 1))
-                            
-                            # IS-IS L2 (faster backbone flooding)
-                            self.animated_packets.append({
-                                'start': current_router,
-                                'end': neighbor,
-                                'offset': offset_counter * 0.35,
-                                'progress': -1,
-                                'duration': 0.7
-                            })
-                            self.animated_packets.append({
-                                'start': neighbor,
-                                'end': current_router,
-                                'offset': offset_counter * 0.35 + 0.35,
-                                'progress': -1,
-                                'duration': 0.7
-                            })
-                    offset_counter += 1
-                
-                # Phase 2: L1 (area) flooding from L2 routers
-                offset_counter = offset_counter * 0.35 + 1.5  # Start after L2 completes
-                queue_l1 = deque(list(visited_l2))
-                visited_l1.update(visited_l2)
-                
-                while queue_l1:
-                    current_router, _ = (queue_l1.popleft(), 0)
-                    for neighbor in graph.neighbors(current_router):
-                        if neighbor not in visited_l1:
-                            visited_l1.add(neighbor)
-                            queue_l1.append(neighbor)
-                            
-                            # IS-IS L1 (slower area flooding)
-                            self.animated_packets.append({
-                                'start': current_router,
-                                'end': neighbor,
-                                'offset': offset_counter,
-                                'progress': -1,
-                                'duration': 0.9
-                            })
-                            self.animated_packets.append({
-                                'start': neighbor,
-                                'end': current_router,
-                                'offset': offset_counter + 0.45,
-                                'progress': -1,
-                                'duration': 0.9
-                            })
-                            offset_counter += 0.3
+                # Create animation packets for these edges based on distance from source
+                for u, v in tree_edges:
+                    dist = distances[u]
+                    self.animated_packets.append({
+                        'start': u,
+                        'end': v,
+                        'offset': dist * 0.5,  # Stagger based on hop count
+                        'progress': -1,
+                        'duration': 1.0
+                    })
+            except nx.NetworkXNoPath:
+                pass
+            except Exception as e:
+                print(f"Error animating shortest paths: {e}")
         
-        # Start animation in background
+        # Start animation on main thread using after()
         self.animation_running = True
         self.protocol_info = protocol_info  # Store for display
-        thread = threading.Thread(target=self._animate_packets_thread, daemon=True)
-        thread.start()
+        start_time = time.time()
+        self.root.after(0, self._animate_step, start_time)
     
     def animate_hello_on_topology(self, graph, routers, source_router=None):
         """Animate HELLO messages spreading from source router"""
@@ -504,19 +372,20 @@ Routers:
                     'duration': 1.5
                 })
         
-        # Start animation in background
+        # Start animation on main thread using after()
         self.animation_running = True
-        thread = threading.Thread(target=self._animate_packets_thread, daemon=True)
-        thread.start()
-    
-    def _animate_packets_thread(self):
-        """Background thread for packet animation"""
         start_time = time.time()
-        total_duration = 8  # Total animation duration in seconds
-        
-        while self.animation_running and (time.time() - start_time) < total_duration:
-            elapsed = time.time() - start_time
+        self.root.after(0, self._animate_step, start_time)
+    
+    def _animate_step(self, start_time):
+        """Animation step called periodically via root.after()"""
+        if not self.animation_running:
+            return
             
+        total_duration = 8  # Total animation duration in seconds
+        elapsed = time.time() - start_time
+        
+        if elapsed < total_duration:
             # Update packet positions based on elapsed time and initial offset
             for packet in self.animated_packets:
                 offset = packet.get('offset', 0)  # Initial delay for staggered start
@@ -535,16 +404,19 @@ Routers:
             try:
                 self._redraw_topology_with_packets()
                 self.canvas.draw()
-                self.root.update()
             except:
                 pass
             
-            time.sleep(0.05)
-        
-        self.animation_running = False
-        # Redraw final state with orange links
-        self._redraw_topology_with_packets(show_packets=False, show_orange_links=True)
-        self.canvas.draw()
+            # Schedule next step
+            self.root.after(50, self._animate_step, start_time)
+        else:
+            self.animation_running = False
+            # Redraw final state with orange links
+            try:
+                self._redraw_topology_with_packets(show_packets=False, show_orange_links=True)
+                self.canvas.draw()
+            except:
+                pass
     
     def _redraw_topology_with_packets(self, show_packets=True, show_orange_links=False):
         """Redraw topology with animated packets and edge colors"""
@@ -572,9 +444,28 @@ Routers:
             anim_type = self.protocol_info.get('animation_type')
 
         if show_orange_links:
-            # Draw all edges as orange to indicate completion
-            nx.draw_networkx_edges(graph, self.graph_pos, width=2.5, alpha=0.95,
-                                  edge_color="#ff9800", ax=self.matplotlib_ax)
+            # Draw only shortest path edges as orange
+            animated_edges = []
+            regular_edges = []
+
+            for edge in graph.edges():
+                src, dest = edge
+                if (src, dest) in self.animated_links or (dest, src) in self.animated_links:
+                    animated_edges.append(edge)
+                else:
+                    regular_edges.append(edge)
+
+            # Draw regular edges (gray)
+            if regular_edges:
+                nx.draw_networkx_edges(graph, self.graph_pos, edgelist=regular_edges,
+                                      width=2, alpha=0.6, edge_color="#95a5a6",
+                                      ax=self.matplotlib_ax)
+
+            # Draw animated edges as orange
+            if animated_edges:
+                nx.draw_networkx_edges(graph, self.graph_pos, edgelist=animated_edges,
+                                      width=2.5, alpha=0.95, edge_color="#ff9800",
+                                      ax=self.matplotlib_ax)
         else:
             # Draw edges with different colors based on animation state
             animated_edges = []
@@ -664,52 +555,64 @@ Routers:
         self.routing_text.config(state="normal")
         self.routing_text.delete(1.0, tk.END)
         
-        # Determine protocol from button text or protocol name
         protocol = self.protocol_name.upper()
+        
+        def parse_info(info, dest):
+            if isinstance(info, dict):
+                return info.get('cost', 0), info.get('next_hop', dest), info.get('as_path', '')
+            return info, dest, ''
         
         if protocol == "OSPF":
             content = f"OSPF Routing Table for {router_id}:\n"
-            content += f"{'Destination':<15} {'Cost (Metric)':<15}\n"
-            content += "-" * 30 + "\n"
+            content += "Codes: O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1\n\n"
+            content += f"{'Network':<15} {'Next Hop':<15} {'Metric':<10}\n"
+            content += "-" * 45 + "\n"
             if routing_table:
-                for dest, cost in sorted(routing_table.items()):
-                    content += f"{dest:<15} {cost:<15}\n"
-        
+                for dest, info in sorted(routing_table.items()):
+                    cost, next_hop, _ = parse_info(info, dest)
+                    content += f"O   {dest+'/32':<11} via {next_hop:<11} {cost:<10}\n"
+                    
         elif protocol == "BGP":
             content = f"BGP Routing Table for {router_id}:\n"
-            content += f"{'Network':<15} {'AS Path':<20} {'Next Hop':<15}\n"
-            content += "-" * 50 + "\n"
+            content += f"Status codes: s suppressed, d damped, h history, * valid, > best, i - internal\n\n"
+            content += f"{'Network':<15} {'Next Hop':<15} {'Metric':<8} {'AS Path'}\n"
+            content += "-" * 60 + "\n"
             if routing_table:
-                for i, (dest, metric) in enumerate(sorted(routing_table.items())):
-                    as_path = f"AS{(i+1)*100} AS{(i+2)*100}"  # Simulate AS path
-                    next_hop = dest
-                    content += f"{dest:<15} {as_path:<20} {next_hop:<15}\n"
-        
+                for dest, info in sorted(routing_table.items()):
+                    cost, next_hop, as_path = parse_info(info, dest)
+                    if not as_path: as_path = "Local"
+                    content += f"*>i {dest+'/32':<11} {next_hop:<15} {cost:<8} {as_path} i\n"
+                    
         elif protocol == "RIP":
             content = f"RIP Routing Table for {router_id}:\n"
-            content += f"{'Destination':<15} {'Metric (Hops)':<15} {'Status':<15}\n"
-            content += "-" * 45 + "\n"
+            content += "Codes: R - RIP\n\n"
+            content += f"{'Network':<15} {'Next Hop':<15} {'Hops':<8} {'Timer'}\n"
+            content += "-" * 55 + "\n"
             if routing_table:
-                for dest, hops in sorted(routing_table.items()):
-                    status = "Reachable" if hops <= 15 else "Unreachable"
-                    content += f"{dest:<15} {hops:<15} {status:<15}\n"
-        
+                for dest, info in sorted(routing_table.items()):
+                    cost, next_hop, _ = parse_info(info, dest)
+                    status = "00:00:15" if cost <= 15 else "down"
+                    content += f"R   {dest+'/32':<11} via {next_hop:<11} {cost:<8} {status}\n"
+                    
         elif protocol == "ISIS":
             content = f"IS-IS Routing Table for {router_id}:\n"
-            content += f"{'Destination':<15} {'Cost':<15} {'Level':<15}\n"
+            content += "Codes: i - IS-IS, L1 - Level-1, L2 - Level-2\n\n"
+            content += f"{'Network':<15} {'Next Hop':<15} {'Metric':<10}\n"
             content += "-" * 45 + "\n"
             if routing_table:
-                for i, (dest, cost) in enumerate(sorted(routing_table.items())):
-                    level = "L2" if i % 3 == 0 else "L1"  # Simulate IS-IS levels
-                    content += f"{dest:<15} {cost:<15} {level:<15}\n"
+                for i, (dest, info) in enumerate(sorted(routing_table.items())):
+                    cost, next_hop, _ = parse_info(info, dest)
+                    level = "L2" if i % 3 == 0 else "L1"
+                    content += f"i {level} {dest+'/32':<10} via {next_hop:<11} {cost:<10}\n"
         
         else:
             content = f"Routing Table for {router_id}:\n"
             content += f"{'Destination':<15} {'Metric':<10}\n"
             content += "-" * 25 + "\n"
             if routing_table:
-                for dest, metric in sorted(routing_table.items()):
-                    content += f"{dest:<15} {metric:<10}\n"
+                for dest, info in sorted(routing_table.items()):
+                    cost, _, _ = parse_info(info, dest)
+                    content += f"{dest:<15} {cost:<10}\n"
         
         if not routing_table:
             content += "No routes calculated yet."
@@ -720,12 +623,6 @@ Routers:
     def update_status(self, message, color="green"):
         """Update status bar"""
         self.statusbar_label.config(text=message, fg=color)
-        self.root.update()
-    
-    def update_calculation_time(self, elapsed_time):
-        """Update calculation time display"""
-        time_text = f"{elapsed_time:.3f}s"
-        self.calc_time_label.config(text=time_text, fg="#27ae60")
         self.root.update()
     
     def update_estimated_convergence_time(self, estimated_time):

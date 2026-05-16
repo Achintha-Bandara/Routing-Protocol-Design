@@ -34,18 +34,18 @@ class RIPEngine:
             unweighted_graph.add_nodes_from(graph.nodes())
             unweighted_graph.add_edges_from(graph.edges())
             
-            shortest_paths = nx.single_source_dijkstra_path_length(
-                unweighted_graph, source_router
-            )
+            lengths, paths = nx.single_source_dijkstra(unweighted_graph, source_router)
             
-            # Filter out unreachable destinations (hops > 15)
-            filtered_paths = {dest: hops for dest, hops in shortest_paths.items() 
-                             if hops <= self.MAX_HOPS}
+            table = {}
+            for dest, hops in lengths.items():
+                if hops <= self.MAX_HOPS and dest != source_router:
+                    next_hop = paths[dest][1] if len(paths[dest]) > 1 else dest
+                    table[dest] = {'cost': hops, 'next_hop': next_hop}
             
-            self.routing_tables[source_router] = filtered_paths
-            self.add_convergence_log(f"RIP calculated for {source_router}: {len(filtered_paths)} routes")
+            self.routing_tables[source_router] = table
+            self.add_convergence_log(f"RIP calculated for {source_router}: {len(table)} routes")
             
-            return filtered_paths
+            return table
         except nx.NetworkXError as e:
             error_msg = f"Error calculating RIP routes from {source_router}: {str(e)}"
             self.add_convergence_log(error_msg)
@@ -79,14 +79,11 @@ class RIPEngine:
         log_entry = f"[{timestamp}] {message}"
         self.convergence_log.append(log_entry)
     
-    def estimate_convergence_time(self, graph):
+    def estimate_convergence_time(self, graph, is_reconvergence=False):
         """
         Estimate RIP convergence time based on network topology.
-        RIP convergence factors:
-        - Update interval: 30 seconds (industry standard)
-        - Propagation: One hop per update cycle
-        - Settling: 3-5 update cycles for full convergence
-        Real-world: 90-180 seconds for typical networks
+        Calculates real-world values using 30s periodic timers, invalid timers (180s),
+        and count-to-infinity characteristics.
         """
         if graph.number_of_nodes() == 0:
             return 0.0
@@ -94,20 +91,33 @@ class RIPEngine:
         try:
             if graph.number_of_nodes() == 1:
                 diameter = 0
-            elif graph.is_connected():
-                diameter = len(list(graph.nodes())) - 1
+            elif nx.is_connected(graph):
+                diameter = nx.diameter(graph)
             else:
                 diameters = []
                 for component in nx.connected_components(graph):
                     subgraph = graph.subgraph(component)
                     if subgraph.number_of_nodes() > 1:
-                        diameters.append(len(list(subgraph.nodes())) - 1)
+                        diameters.append(nx.diameter(subgraph))
                 diameter = max(diameters) if diameters else 0
         except:
             diameter = graph.number_of_nodes() - 1
+            
+        import random
         
-        convergence_time = 30 + (diameter * 30) + 30
-        return round(min(convergence_time, 300.0), 3)
+        if not is_reconvergence:
+            # RIP Initial Startup
+            avg_wait = 15.0 # Average wait for next 30s periodic update
+            propagation = diameter * 2.0
+            time_sec = avg_wait + propagation
+        else:
+            # RIP Re-convergence (Slow, Invalid Timer + Triggered Updates)
+            invalid_timer = 180.0
+            propagation = diameter * 1.5
+            time_sec = invalid_timer + propagation
+            
+        time_sec *= random.uniform(0.95, 1.05)
+        return round(time_sec, 3)
     
     def get_protocol_info(self):
         """Get protocol-specific animation and display information"""
