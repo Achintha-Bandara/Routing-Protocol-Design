@@ -1,0 +1,26 @@
+{
+  "name": "Six Router Mesh Topology",
+  "event": {
+    "type": "link_weight_change",
+    "edge": ["R2", "R5"],
+    "new_weight": 11
+  },
+  "nodes": [
+    {"id": "R1"},
+    {"id": "R2"},
+    {"id": "R3"},
+    {"id": "R4"},
+    {"id": "R5"},
+    {"id": "R6"}
+  ],
+  "edges": [
+    {"source": "R1", "target": "R2", "weight": 4, "delay": 1.0},
+    {"source": "R2", "target": "R3", "weight": 3, "delay": 1.1},
+    {"source": "R3", "target": "R4", "weight": 2, "delay": 0.9},
+    {"source": "R4", "target": "R5", "weight": 4, "delay": 1.0},
+    {"source": "R5", "target": "R6", "weight": 3, "delay": 1.2},
+    {"source": "R6", "target": "R1", "weight": 5, "delay": 1.3},
+    {"source": "R2", "target": "R5", "weight": 6, "delay": 1.4},
+    {"source": "R3", "target": "R6", "weight": 5, "delay": 1.0}
+  ]
+}
