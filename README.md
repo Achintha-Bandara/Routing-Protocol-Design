@@ -38,7 +38,7 @@ python aospf.py  # Recommended for AOSPF analysis
 ### How to Run Benchmarking Comparison
 To generate performance charts and comparative timing reports (AOSPF vs. OSPF):
 
-```powershell
+```bash
 git clone https://github.com/Achintha-Bandara/Routing-Protocol-Design.git
 cd Routing-Protocol-Design/comparison
 python main.py
