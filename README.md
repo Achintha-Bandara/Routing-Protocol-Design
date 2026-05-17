@@ -39,7 +39,8 @@ python aospf.py  # Recommended for AOSPF analysis
 To generate performance charts and comparative timing reports (AOSPF vs. OSPF):
 
 ```powershell
-cd "comparison"
+git clone https://github.com/Achintha-Bandara/Routing-Protocol-Design.git
+cd Routing-Protocol-Design/comparison
 python main.py
 ```
 
