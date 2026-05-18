@@ -71,23 +71,8 @@ See the [directory README](src/protocol_comparison/README.md) for more on metric
 
 ## Additional Directories
 
-- **results/**: Placeholder for experiment outputs, if any.
-- **docs/**: Supplementary documentation (may be empty).
-
-This will launch the benchmarking GUI and generate comparative analysis across multiple network topologies.
-
-## Dashboard Features
-
-- **Simulation Speed**: Slider to accelerate time (up to 100x) for observing long-term stability
-- **Link Control**: Manually fail/recover links to measure exact convergence time
-- **Metrics Database**: View persistent logs of synchronization events
-- **Performance Charts**: Compare convergence time, message overhead, and CPU load
-
-## Key Metrics Tracked
-
-- **Convergence Time**: Time taken for the network to reach a stable state after a failure
-- **Message Overhead**: Total number of protocol packets exchanged
-- **CPU Load / Complexity**: Estimated cost of SPF recomputations
+- **results/**: Experiment outputs
+- **docs/**: Supplementary documentation
 
 ---
 
