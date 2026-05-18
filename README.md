@@ -1,84 +1,78 @@
 # Routing Protocol Design & Simulation
 
-This project implements and simulates advanced routing protocols with a focus on **Adaptive OSPF (AOSPF)** compared against standard **OSPF** and other variants. It provides real-time visualization of network behavior, LSA flooding, and convergence metrics.
+This project implements, simulates, and benchmarks advanced routing protocols—including **Adaptive OSPF (AOSPF)**—in Python. Users can run standalone visual simulators and also measure protocol performance across various network topologies.
 
 ## Prerequisites
+
 - Python 3.10+
-- Dependencies listed in `requirements.txt`
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/Achintha-Bandara/Routing-Protocol-Design.git
-cd Routing-Protocol-Design
-```
-
-2. Create a virtual environment (recommended):
-```bash
-# On Windows
-python -m venv venv
-venv\Scripts\activate
-
-# On macOS/Linux
-python3 -m venv venv
-source venv/bin/activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+- Dependencies: `networkx`, `matplotlib`, `tkinter`
+- Install dependencies:
+  ```bash
+  pip install networkx matplotlib
+  ```
 
 ## Repository Structure
 
 ```
-Routing-Protocol-Design/
-│
-├── simulation_files/                 # Visual Protocol Simulators
-│   ├── aospf.py                     # Adaptive OSPF simulator (flagship)
-│   ├── ospf.py                      # Standard OSPF baseline implementation
-│   ├── ospf_with_security.py        # OSPF with security features
-│   ├── ospf_no_security.py          # OSPF without security features
-│   └── README.md                    # Simulation documentation
-│
-├── comparison/                       # Protocol Benchmarking Suite
-│   ├── main.py                      # Benchmarking GUI launcher
-│   ├── protocol_sim/                # Core simulation logic for comparison
-│   ├── topology.json                # Default network topology configuration
-│   └── README.md                    # Comparison module documentation
-│
-├── requirements.txt                 # Python dependencies and installation guide
-├── README.md                        # This file
-└── LICENSE                          # Project license
-
+├── src/
+│   ├── protocol_simulation/
+│   │   ├── aospf.py
+│   │   ├── ospf.py
+│   │   ├── ospf_no_security.py
+│   │   ├── ospf_with_security.py
+│   │   ├── topology.json
+│   │   ├── README.md
+│   └── protocol_comparison/
+│       ├── main.py
+│       ├── protocol_sim/
+│       ├── topology.json
+│       ├── topology_6.json
+│       ├── topology_10_complex.json
+│       ├── topology_large_20.json
+│       ├── topology_aospf_advantage_24.json
+│       ├── README.md
+├── results/
+├── docs/
+├── README.md
 ```
 
-## Execution Guide
+## Protocol Simulators (src/protocol_simulation)
 
-### How to Run Visual Simulators
+Standalone, real-time simulators for each protocol variant:
 
-Navigate to the `simulation_files/` directory and run any protocol script directly. These are **standalone** applications and provide the most detailed visual feedback.
+- **aospf.py** — Adaptive OSPF (AOSPF) with visual database synchronization, optimized LSA flooding, and neighborhood discovery.
+- **ospf.py** — Baseline OSPF implementation.
+- **ospf_with_security.py** — OSPF with cryptographic hash adjacency.
+- **ospf_no_security.py** — OSPF without security checks, for direct comparison.
 
+*To run a protocol simulator:*
 ```bash
-cd simulation_files
-python aospf.py  # Recommended for AOSPF analysis
+cd src/protocol_simulation
+python aospf.py         # Or replace with desired file
 ```
 
-**Available simulators:**
-- **`aospf.py`**: The flagship simulator for the Adaptive OSPF (AOSPF) protocol.
-- **`ospf.py`**: Standard OSPF implementation baseline.
-- **`ospf_with_security.py`**: OSPF variant with cryptographic security.
-- **`ospf_no_security.py`**: OSPF variant without security for performance comparison.
+Each file is independent with an integrated dashboard for visual feedback.
+See the [directory README](src/protocol_simulation/README.md) for more.
 
-### How to Run Benchmarking Comparison
+## Protocol Performance Benchmark Suite (src/protocol_comparison)
 
-To generate performance charts and comparative timing reports (AOSPF vs. OSPF):
+A benchmarking GUI for side-by-side comparisons of OSPF, AOSPF, and other variants. Covers convergence time, message overhead, and CPU cost.
 
+- **main.py:** Run this for the benchmarking interface.
+- **protocol_sim/:** Module housing comparative protocol logic.
+- Multiple topologies available for scalable tests.
+
+*To run benchmarking:*
 ```bash
-cd comparison
+cd src/protocol_comparison
 python main.py
 ```
+See the [directory README](src/protocol_comparison/README.md) for more on metrics and usage.
+
+## Additional Directories
+
+- **results/**: Placeholder for experiment outputs, if any.
+- **docs/**: Supplementary documentation (may be empty).
 
 This will launch the benchmarking GUI and generate comparative analysis across multiple network topologies.
 
