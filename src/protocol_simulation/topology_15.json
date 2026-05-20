@@ -1,0 +1,43 @@
+{
+  "nodes": [
+    { "id": "A", "x": 0, "y": 4 },
+    { "id": "B", "x": 2, "y": 7 },
+    { "id": "C", "x": 2, "y": 1 },
+    { "id": "D", "x": 4, "y": 4 },
+    { "id": "E", "x": 4, "y": 8 },
+    { "id": "F", "x": 4, "y": 0 },
+    { "id": "G", "x": 6, "y": 6 },
+    { "id": "H", "x": 6, "y": 2 },
+    { "id": "I", "x": 8, "y": 4 },
+    { "id": "J", "x": 10, "y": 7 },
+    { "id": "K", "x": 10, "y": 1 },
+    { "id": "L", "x": 12, "y": 4 },
+    { "id": "M", "x": 14, "y": 6 },
+    { "id": "N", "x": 14, "y": 2 },
+    { "id": "O", "x": 16, "y": 4 }
+  ],
+  "edges": [
+    { "from": "A", "to": "B", "bandwidth": "500Mbps", "delay": 6 },
+    { "from": "A", "to": "C", "bandwidth": "100Mbps", "delay": 10 },
+    { "from": "B", "to": "D", "bandwidth": "200Mbps", "delay": 12 },
+    { "from": "B", "to": "E", "bandwidth": "50Mbps",  "delay": 16 },
+    { "from": "C", "to": "D", "bandwidth": "500Mbps", "delay": 8 },
+    { "from": "C", "to": "F", "bandwidth": "20Mbps",  "delay": 20 },
+    { "from": "E", "to": "G", "bandwidth": "100Mbps", "delay": 14 },
+    { "from": "D", "to": "G", "bandwidth": "10Mbps",  "delay": 24 },
+    { "from": "D", "to": "H", "bandwidth": "1Gbps",   "delay": 2 },
+    { "from": "F", "to": "H", "bandwidth": "300Mbps", "delay": 7 },
+    { "from": "G", "to": "I", "bandwidth": "150Mbps", "delay": 11 },
+    { "from": "H", "to": "I", "bandwidth": "50Mbps",  "delay": 18 },
+    { "from": "G", "to": "J", "bandwidth": "400Mbps", "delay": 5 },
+    { "from": "H", "to": "K", "bandwidth": "200Mbps", "delay": 9 },
+    { "from": "I", "to": "L", "bandwidth": "1Gbps",   "delay": 3 },
+    { "from": "J", "to": "L", "bandwidth": "100Mbps", "delay": 12 },
+    { "from": "K", "to": "L", "bandwidth": "50Mbps",  "delay": 15 },
+    { "from": "J", "to": "M", "bandwidth": "250Mbps", "delay": 8 },
+    { "from": "K", "to": "N", "bandwidth": "100Mbps", "delay": 14 },
+    { "from": "M", "to": "O", "bandwidth": "500Mbps", "delay": 6 },
+    { "from": "N", "to": "O", "bandwidth": "1Gbps",   "delay": 2 },
+    { "from": "L", "to": "O", "bandwidth": "300Mbps", "delay": 7 }
+  ]
+}

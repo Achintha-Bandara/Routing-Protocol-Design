@@ -7,12 +7,47 @@ import sys
 import json
 import os
 import math
+import hmac
+import hashlib
+import secrets
+
+# -------------------------------------------------------
+# HMAC SECURITY LAYER
+# -------------------------------------------------------
+OSPF_HMAC_KEY = secrets.token_bytes(32)   # Shared secret — all legitimate routers know this
+HMAC_ALGORITHM = "sha256"
+
+def compute_lsa_hmac(lsa_payload: dict) -> str:
+    canonical = (
+        f"{lsa_payload['router_id']}|"
+        f"{lsa_payload['sequence_num']}|"
+        f"{lsa_payload['ttl']}|"
+        f"{sorted(lsa_payload['neighbors'].items())}"
+    ).encode()
+    return hmac.new(OSPF_HMAC_KEY, canonical, HMAC_ALGORITHM).hexdigest()
+
+def sign_lsa(lsa_payload: dict) -> dict:
+    signed = dict(lsa_payload)
+    signed["hmac"] = compute_lsa_hmac(lsa_payload)
+    return signed
+
+def verify_lsa(lsa_payload: dict) -> tuple:
+    if "hmac" not in lsa_payload:
+        return False, "REJECTED — No HMAC tag present (unsigned / forged packet)"
+    expected = compute_lsa_hmac(lsa_payload)
+    received = lsa_payload.get("hmac", "")
+    if hmac.compare_digest(expected, received):
+        return True, f"ACCEPTED — HMAC-SHA256 verified (tag ...{received[-8:]})"
+    else:
+        return False, (f"REJECTED — HMAC mismatch: got ...{received[-8:]}, "
+                       f"expected ...{expected[-8:]} (packet forged or tampered)")
+
 
 class aospfAsynchronousWorkspaceDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("aospf Unified Engine: Asynchronous Multi-Convergence Simulation")
-        self.root.geometry("1550x950")
+        self.root.title("aospf Unified Engine — HMAC-SHA256 Secured")
+        self.root.geometry("1600x980")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # aospf Protocol Timer Configurations (in milliseconds)
@@ -27,19 +62,19 @@ class aospfAsynchronousWorkspaceDashboard:
         # Persistent Global Convergence Database Metrics Buffer
         self.convergence_metrics_database = []
 
-        # 1. Load topology from topology_5.json
+        # 1. Load topology from topology.json
         self.G = nx.Graph()
         self._load_topology()
         
     def _load_topology(self):
-        """Load network topology from topology_5.json file."""
+        """Load network topology from topology.json file."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        topology_path = os.path.join(script_dir, 'topology_5.json')
+        topology_path = os.path.join(script_dir, 'topology.json')
         
         if not os.path.exists(topology_path):
             raise FileNotFoundError(
-                f"topology_5.json not found at: {topology_path}\n"
-                "Please create a topology_5.json file with 'nodes' and 'edges' keys."
+                f"topology.json not found at: {topology_path}\n"
+                "Please create a topology.json file with 'nodes' and 'edges' keys."
             )
         
         with open(topology_path, 'r') as f:
@@ -101,6 +136,9 @@ class aospfAsynchronousWorkspaceDashboard:
         self.delay_changes = [] # Dynamic property runtime delay adjustment logs
         self.cost_changes  = [] # Retained internally for fallback validation paths
 
+        self.attack_injected = False
+        self.attack_inject_time = None
+
         # Build UI Panels
         self.setup_ui()
         
@@ -127,6 +165,8 @@ class aospfAsynchronousWorkspaceDashboard:
         self.delay_changes = []
         self.cost_changes  = []
         self.selected_edge = None
+        self.attack_injected = False
+        self.attack_inject_time = None
         self.convergence_metrics_database = []  # Clear only when a fresh run is initialized
         
         # Execute Engine Compilation Pass
@@ -138,6 +178,7 @@ class aospfAsynchronousWorkspaceDashboard:
         self.w1_combo.config(state="disabled")
         self.w2_combo.config(state="disabled")
         self.start_btn.config(state="disabled")
+        self.attack_btn.config(state="normal")
         self.prev_btn.config(state="normal")
         self.next_btn.config(state="normal")
         self.sync_btn.config(state="normal")
@@ -153,6 +194,8 @@ class aospfAsynchronousWorkspaceDashboard:
         self.link_toggles = []
         self.delay_changes = []
         self.cost_changes  = []
+        self.attack_injected = False
+        self.attack_inject_time = None
         self.convergence_metrics_database = []  # Completely reset buffer history
         
         # Unlock Configuration Elements / Lock Playback Actions
@@ -160,6 +203,7 @@ class aospfAsynchronousWorkspaceDashboard:
         self.w1_combo.config(state="readonly")
         self.w2_combo.config(state="readonly")
         self.start_btn.config(state="normal")
+        self.attack_btn.config(state="disabled")
         self.prev_btn.config(state="disabled")
         self.next_btn.config(state="disabled")
         self.sync_btn.config(state="disabled")
@@ -168,7 +212,7 @@ class aospfAsynchronousWorkspaceDashboard:
         # Reset text tracking fields
         self.flood_log.config(state=tk.NORMAL)
         self.flood_log.delete('1.0', tk.END)
-        self.flood_log.insert(tk.END, "⚙️ SYSTEM ADJACENCY IDLE MODE\nConfigure metrics above, then click 'Start Simulation 🚀' to execute the protocol state machine sequence.")
+        self.flood_log.insert(tk.END, "SYSTEM IDLE — Click 'Start Simulation' to begin.")
         self.flood_log.config(state=tk.DISABLED)
         
         self.convergence_log_box.config(state=tk.NORMAL)
@@ -185,9 +229,22 @@ class aospfAsynchronousWorkspaceDashboard:
         self.local_router_log_box.insert(tk.END, "Adjacency links offline. Run simulation to discover ports.")
         self.local_router_log_box.config(state=tk.DISABLED)
         
-        self.convergence_indicator_lbl.config(text="🛑 Simulation Not Started", bg="#dcdde1", fg="#2c3e50")
+        self.convergence_indicator_lbl.config(text="Simulation Not Started", bg="#dcdde1", fg="#2c3e50")
+        self.hmac_banner.config(text="HMAC-SHA256 security layer active — all LSAs signed on transmit", bg="#2c3e50", fg="#dfe6e9")
         
         self.render_base_configuration_graph()
+
+    def inject_fake_lsa(self):
+        if not self.simulation_started:
+            return
+        self.attack_injected = True
+        self.attack_inject_time = self.current_time_ms
+        self.run_continuous_event_simulation()
+        self.render_all_views()
+        self.hmac_banner.config(
+            text=f"ATTACK LSA injected at t={self.attack_inject_time}ms — HMAC verification BLOCKED it (see Global Log)",
+            bg="#c0392b", fg="white"
+        )
 
     def toggle_selected_link(self):
         """Commits an administrative link fail/restore event to the simulation timeline."""
@@ -268,10 +325,17 @@ class aospfAsynchronousWorkspaceDashboard:
 
         # --- SEED INITIAL HELLO TRANSMISSION EVENTS ---
         self.logs_database.append({
-            "time": 0, "text": f"System Boot Initialization: All routers schedule periodic HELLO transmissions every {self.hello_interval}ms.", "routers": list(nodes), "type": "init"
+            "time": 0,
+            "text": (f"[BOOT] All routers initialised. HELLO interval={self.hello_interval}ms. "
+                     f"HMAC-SHA256 signing enabled (shared key ...{OSPF_HMAC_KEY.hex()[-8:]})."),
+            "routers": list(nodes), "type": "init"
         })
         for n in nodes:
             event_queue.append((0, "HELLO_SEND", (n,)))
+
+        # Seed attack event if requested
+        if self.attack_injected and self.attack_inject_time is not None:
+            event_queue.append((self.attack_inject_time, "FAKE_LSA_INJECT", ()))
 
         self.timeline_states = {}
         last_logged_state = "RED" 
@@ -329,9 +393,9 @@ class aospfAsynchronousWorkspaceDashboard:
                             # Fire updated corrective LSA metrics advertisements
                             lsa_seq[u] += 1
                             active_nbrs = {k: advertised_costs[u][k] for k in self.G.neighbors(u) if adj_states[u][k] == "2WAY"}
-                            lsa_payload = {
+                            lsa_payload = sign_lsa({
                                 "router_id": u, "sequence_num": lsa_seq[u], "ttl": 64, "neighbors": active_nbrs
-                            }
+                            })
                             current_lsdb[u][u] = lsa_payload
                             self.router_events[u].append((current_time, f"Generated updated topology Router-LSA (Seq: {lsa_seq[u]}) isolating dead interface.", "db_update"))
                             
@@ -399,9 +463,9 @@ class aospfAsynchronousWorkspaceDashboard:
                             lsa_triggered[receiver] = True
                             lsa_seq[receiver] += 1
                             active_nbrs = {k: advertised_costs[receiver][k] for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
-                            lsa_payload = {
+                            lsa_payload = sign_lsa({
                                 "router_id": receiver, "sequence_num": lsa_seq[receiver], "ttl": 64, "neighbors": active_nbrs
-                            }
+                            })
                             current_lsdb[receiver][receiver] = lsa_payload
                             self.router_events[receiver].append((current_time, f"Triggered optimization LSA metrics re-generation pass (Seq: {lsa_seq[receiver]}).", "db_update"))
                             
@@ -446,9 +510,9 @@ class aospfAsynchronousWorkspaceDashboard:
                                 
                                 lsa_seq[receiver] += 1
                                 active_nbrs = {k: advertised_costs[receiver][k] for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
-                                lsa_payload = {
+                                lsa_payload = sign_lsa({
                                     "router_id": receiver, "sequence_num": lsa_seq[receiver], "ttl": 64, "neighbors": active_nbrs
-                                }
+                                })
                                 current_lsdb[receiver][receiver] = lsa_payload
                                 
                                 for nbr in self.G.neighbors(receiver):
@@ -468,14 +532,37 @@ class aospfAsynchronousWorkspaceDashboard:
                 elif ev_type == "LSA_ARRIVE":
                     sender, receiver, incoming_payload, link_delay = data
                     if tuple(sorted((sender, receiver))) in broken_links:
-                        continue 
+                        if sender != "ATTACK":
+                            continue 
                     
                     active_protocol_disruption = True 
                     owner = incoming_payload["router_id"]
+                    
+                    # HMAC verification — the key gate
+                    hmac_ok, hmac_reason = verify_lsa(incoming_payload)
+                    
                     self.logs_database.append({
-                        "time": current_time, "text": f"Packet carrying {owner}'s LSA arrives at Router {receiver} from Router {sender}.", "routers": [sender, receiver], "type": "received"
+                        "time": current_time,
+                        "text": (f"[LSA ARRIVAL] Router {receiver} received LSA from {sender} "
+                                 f"(Origin: Router_{owner}, Seq:{incoming_payload['sequence_num']})  →  "
+                                 f"HMAC: {hmac_reason}"),
+                        "routers": [sender, receiver],
+                        "type": "hmac_ok" if hmac_ok else "hmac_fail"
                     })
-                    self.router_events[receiver].append((current_time, f"Received LSA packet [Origin: Router {owner}, Seq: {incoming_payload['sequence_num']}] from neighbor Router {sender}.", "received"))
+                    self.router_events[receiver].append((
+                        current_time, 
+                        f"LSA from {sender} (Origin:{owner}, Seq:{incoming_payload['sequence_num']}). HMAC: {hmac_reason}", 
+                        "received" if hmac_ok else "dropped"
+                    ))
+                    
+                    if not hmac_ok:
+                        self.logs_database.append({
+                            "time": current_time,
+                            "text": (f"[SECURITY DROP] Router {receiver} DISCARDED LSA from Router_{owner} — "
+                                     f"{hmac_reason}. LSDB is unchanged. Attack neutralised."),
+                            "routers": [receiver], "type": "hmac_fail"
+                        })
+                        continue   # Do NOT install or re-flood
                     
                     cached_seq = current_lsdb[receiver].get(owner, {}).get("sequence_num", 0)
                     if incoming_payload["sequence_num"] > cached_seq:
@@ -485,6 +572,45 @@ class aospfAsynchronousWorkspaceDashboard:
                     else:
                         self.router_events[receiver].append((current_time, f"Dropped duplicate LSA [Origin: Router {owner}] (Suppression active).", "dropped"))
                         
+                elif ev_type == "FAKE_LSA_INJECT":
+                    all_nodes_sorted = sorted(list(self.G.nodes()))
+                    atk_nbrs = {}
+                    if len(all_nodes_sorted) >= 1: atk_nbrs[all_nodes_sorted[0]] = 1
+                    if len(all_nodes_sorted) >= 2: atk_nbrs[all_nodes_sorted[1]] = 1
+
+                    fake_lsa = {
+                        "router_id": "ATTACK",
+                        "sequence_num": 9999,
+                        "ttl": 64,
+                        "neighbors": atk_nbrs
+                        # Deliberately NO "hmac" field
+                    }
+
+                    self.logs_database.append({
+                        "time": current_time,
+                        "text": (f"[ATTACK EVENT] Adversary router 'ATTACK' injects forged LSA "
+                                 f"(Seq:9999, claiming neighbors {list(atk_nbrs.keys())}). "
+                                 f"Packet has NO HMAC signature."),
+                        "routers": list(nodes), "type": "hmac_fail"
+                    })
+
+                    # Try to deliver to every node that has at least one 2-WAY neighbor
+                    delivered = 0
+                    for n in nodes:
+                        for nbr in self.G.neighbors(n):
+                            if adj_states[n][nbr] == "2WAY":
+                                d = get_current_delay(n, nbr, current_time)
+                                event_queue.append((current_time + d, "LSA_ARRIVE", ("ATTACK", n, dict(fake_lsa), d)))
+                                delivered += 1
+                                break
+
+                    if delivered == 0:
+                        self.logs_database.append({
+                            "time": current_time,
+                            "text": "[ATTACK EVENT] No 2-WAY adjacencies found yet. Fake LSA could not be delivered. Try after convergence.",
+                            "routers": [], "type": "hmac_fail"
+                        })
+
                 elif ev_type == "LSA_PROCESS":
                     router, incoming_payload, arrival_port = data
                     active_protocol_disruption = True 
@@ -680,112 +806,151 @@ class aospfAsynchronousWorkspaceDashboard:
     # UI Layout Construction
     # -------------------------------------------------------
     def setup_ui(self):
-        self.left_column = tk.Frame(self.root, width=580, padx=10, pady=10)
-        self.left_column.pack(side=tk.LEFT, fill=tk.Y)
-        self.left_column.pack_propagate(False)
+        # Master grid for scalable layout
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
 
+        # Left column (controls) with scrollbar (column 0)
+        left_container = tk.Frame(self.root, width=580)
+        left_container.grid(row=0, column=0, sticky="nswe")
+        left_container.grid_rowconfigure(0, weight=1)
+        left_container.grid_columnconfigure(0, weight=1)
+        left_container.pack_propagate(False)
+
+        self.left_canvas = tk.Canvas(left_container, width=560)
+        scrollbar = tk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
+        self.left_canvas.configure(yscrollcommand=scrollbar.set)
+        self.left_canvas.grid(row=0, column=0, sticky="nswe")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Inner frame for left-side widgets
+        self.left_column = tk.Frame(self.left_canvas, padx=10, pady=10)
+        self.left_canvas.create_window((0, 0), window=self.left_column, anchor="nw")
+
+        # Update scroll region when inner frame changes
+        self.left_column.bind("<Configure>", self._on_left_column_configure)
+        self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
+
+        # Right column (graph) (column 1)
         self.right_column = tk.Frame(self.root, padx=10, pady=10)
-        self.right_column.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.right_column.grid(row=0, column=1, sticky="nswe")
+        self.right_column.grid_rowconfigure(0, weight=1)
+        self.right_column.grid_columnconfigure(0, weight=1)
 
+        # Build panels
         self.build_top_flooding_panel()
         self.build_bottom_inspector_panel()
         self.build_graph_canvas()
 
+    def _on_left_column_configure(self, event=None):
+        # Update scroll region to encompass inner frame
+        self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+
+    def _on_left_canvas_configure(self, event):
+        # Resize inner frame to fit canvas width
+        self.left_canvas.itemconfig(self.left_canvas.find_withtag("all")[0], width=event.width)
+
     def build_top_flooding_panel(self):
-        flood_frame = tk.LabelFrame(self.left_column, text=" 1. Distributed LSA Flooding Synchronization Panel ", font=("Helvetica", 11, "bold"), fg="#2c3e50", padx=10, pady=10)
+        flood_frame = tk.LabelFrame(self.left_column, text=" 1. LSA Flooding & Security Panel ", font=("Helvetica", 11, "bold"), fg="#2c3e50", padx=8, pady=8)
         flood_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        # Lifecycle Configuration Segment Box
-        config_box = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=5, pady=5)
-        config_box.pack(fill=tk.X, pady=(0, 5))
-        
-        tk.Label(config_box, text="Hello (ms):", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        self.hello_combo = ttk.Combobox(config_box, values=["1000", "2000", "3000", "5000"], state="readonly", width=5)
-        self.hello_combo.pack(side=tk.LEFT, padx=2)
+        # Row 1: Hello interval + Start
+        row1 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        row1.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row1, text="OSPF Hello Interval (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.hello_combo = ttk.Combobox(row1, values=["1000", "2000", "3000", "5000"], state="readonly", width=6)
+        self.hello_combo.pack(side=tk.LEFT, padx=4)
         self.hello_combo.set("3000")
-
-        tk.Label(config_box, text="w1:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        self.w1_combo = ttk.Combobox(config_box, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
-        self.w1_combo.pack(side=tk.LEFT, padx=2)
-        self.w1_combo.set("10")
-
-        tk.Label(config_box, text="w2:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        self.w2_combo = ttk.Combobox(config_box, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
-        self.w2_combo.pack(side=tk.LEFT, padx=2)
-        self.w2_combo.set("1")
         
-        self.start_btn = tk.Button(config_box, text="Start Simulation 🚀", font=("Helvetica", 9, "bold"), command=self.start_simulation, bg="#27ae60", fg="#ffffff", activebackground="#219653")
+        self.start_btn = tk.Button(row1, text="Start Simulation", font=("Helvetica", 9, "bold"), command=self.start_simulation, bg="#27ae60", fg="white")
         self.start_btn.pack(side=tk.RIGHT, padx=4)
 
-        # LINK DISRUPTION ADMINISTRATOR PANEL
-        link_admin_box = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=5, pady=5)
-        link_admin_box.pack(fill=tk.X, pady=(0, 5))
-        tk.Label(link_admin_box, text="Link Disruption Administrator:", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        
-        self.link_toggle_btn = tk.Button(link_admin_box, text="Select a Link on Map", font=("Helvetica", 10, "bold"), state="disabled", command=self.toggle_selected_link)
+        # Row 1b: AOSPF w1/w2 (Added for aospf specifically)
+        row1b = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        row1b.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row1b, text="AOSPF Metrics — w1:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.w1_combo = ttk.Combobox(row1b, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
+        self.w1_combo.pack(side=tk.LEFT, padx=2)
+        self.w1_combo.set("10")
+        tk.Label(row1b, text="w2:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.w2_combo = ttk.Combobox(row1b, values=["0", "1", "2", "5", "10", "20", "50"], state="readonly", width=4)
+        self.w2_combo.pack(side=tk.LEFT, padx=2)
+        self.w2_combo.set("1")
+
+        # Security status banner
+        self.hmac_banner = tk.Label(flood_frame, text="HMAC-SHA256 security layer active — all LSAs signed on transmit", font=("Helvetica", 9, "bold"), bg="#2c3e50", fg="#dfe6e9", bd=1, relief=tk.SUNKEN, pady=3)
+        self.hmac_banner.pack(fill=tk.X, pady=(0, 4))
+
+        # Row 2: Attack injection
+        row2 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        row2.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row2, text="Security Attack:", font=("Helvetica", 9, "bold"), fg="#c0392b").pack(side=tk.LEFT, padx=2)
+        self.attack_btn = tk.Button(row2, text="Inject Fake LSA 💥", font=("Helvetica", 9, "bold"), command=self.inject_fake_lsa, state="disabled", bg="#c0392b", fg="white", activebackground="#a93226")
+        self.attack_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=4)
+
+        # Row 3: Link disruption
+        row3 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        row3.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row3, text="Link Disruption:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.link_toggle_btn = tk.Button(row3, text="Select a Link on Map", font=("Helvetica", 9, "bold"), state="disabled", command=self.toggle_selected_link)
         self.link_toggle_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=4)
 
-        # RUNTIME DELAY ADJUSTER SELECTOR
-        delay_admin_box = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=5, pady=5)
-        delay_admin_box.pack(fill=tk.X, pady=(0, 5))
-        tk.Label(delay_admin_box, text="Runtime Delay Selector (ms):", font=("Helvetica", 9, "bold"), fg="#2c3e50").pack(side=tk.LEFT, padx=2)
-        
-        self.delay_change_combo = ttk.Combobox(delay_admin_box, values=["2", "5", "8", "12", "15", "20", "25", "30", "40", "50"], state="disabled", width=8)
+        # Row 4: Delay
+        row4 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        row4.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(row4, text="Runtime Delay (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.delay_change_combo = ttk.Combobox(row4, values=["2","5","8","12","15","20","25","30","40","50"], state="disabled", width=8)
         self.delay_change_combo.pack(side=tk.RIGHT, padx=4)
         self.delay_change_combo.bind("<<ComboboxSelected>>", self.apply_runtime_delay_change)
 
-        # Playback navigation size selectors
-        step_ctrl_box = tk.Frame(flood_frame)
-        step_ctrl_box.pack(fill=tk.X, pady=2)
-        
-        tk.Label(step_ctrl_box, text="Adjustable Skip Step Size (ms):", font=("Helvetica", 10, "bold"), fg="#2f3640").pack(side=tk.LEFT, padx=2)
-        self.step_combo = ttk.Combobox(step_ctrl_box, values=["5", "10", "50", "100", "1000"], state="readonly", width=10)
-        self.step_combo.pack(side=tk.LEFT, padx=5)
-        self.step_combo.set("100") 
+        # Step / navigation
+        step_row = tk.Frame(flood_frame)
+        step_row.pack(fill=tk.X, pady=2)
+        tk.Label(step_row, text="Step Size (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.step_combo = ttk.Combobox(step_row, values=["5","10","50","100","1000"], state="readonly", width=8)
+        self.step_combo.pack(side=tk.LEFT, padx=4)
+        self.step_combo.set("100")
 
-        # Playback stepping controls
-        btn_box = tk.Frame(flood_frame)
-        btn_box.pack(fill=tk.X, pady=5)
-        self.prev_btn = tk.Button(btn_box, text="◀ Prev Step", font=("Helvetica", 11, "bold"), command=self.prev_timeline_step, bg="#222f3e", fg="#ffffff", activebackground="#1e272e", relief=tk.RAISED, bd=3)
-        self.prev_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=4)
-        self.next_btn = tk.Button(btn_box, text="Next Step ▶", font=("Helvetica", 11, "bold"), command=self.next_timeline_step, bg="#1e3799", fg="#ffffff", activebackground="#0a3d62", relief=tk.RAISED, bd=3)
-        self.next_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=4)
+        nav_row = tk.Frame(flood_frame)
+        nav_row.pack(fill=tk.X, pady=4)
+        self.prev_btn = tk.Button(nav_row, text="◀ Prev", font=("Helvetica", 10, "bold"), command=self.prev_timeline_step, bg="#222f3e", fg="white")
+        self.prev_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+        self.next_btn = tk.Button(nav_row, text="Next ▶", font=("Helvetica", 10, "bold"), command=self.next_timeline_step, bg="#1e3799", fg="white")
+        self.next_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=3)
 
-        # Post-execution shortcuts
-        shortcut_box = tk.Frame(flood_frame)
-        shortcut_box.pack(fill=tk.X, pady=2)
-        self.sync_btn = tk.Button(shortcut_box, text="Skip to Synchronize ⚡", font=("Helvetica", 9, "bold"), command=self.skip_to_synchronize, bg="#f39c12", fg="#ffffff", activebackground="#d35400")
+        sc_row = tk.Frame(flood_frame)
+        sc_row.pack(fill=tk.X, pady=2)
+        self.sync_btn = tk.Button(sc_row, text="Skip to Convergence ⚡", font=("Helvetica", 9, "bold"), command=self.skip_to_synchronize, bg="#f39c12", fg="white")
         self.sync_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        self.reset_btn = tk.Button(shortcut_box, text="Reset Engine 🔄", font=("Helvetica", 9, "bold"), command=self.reset_simulation, bg="#7f8c8d", fg="#ffffff", activebackground="#7f8c8d")
+        self.reset_btn = tk.Button(sc_row, text="Reset Engine", font=("Helvetica", 9, "bold"), command=self.reset_simulation, bg="#7f8c8d", fg="white")
         self.reset_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=2)
 
-        self.convergence_indicator_lbl = tk.Label(flood_frame, text="🛑 Simulation Not Started", font=("Helvetica", 11, "bold"), bg="#dcdde1", fg="#2c3e50", bd=1, relief=tk.SOLID, pady=4)
-        self.convergence_indicator_lbl.pack(fill=tk.X, pady=5)
+        self.convergence_indicator_lbl = tk.Label(flood_frame, text="Simulation Not Started", font=("Helvetica", 10, "bold"), bg="#dcdde1", fg="#2c3e50", bd=1, relief=tk.SOLID, pady=3)
+        self.convergence_indicator_lbl.pack(fill=tk.X, pady=4)
 
-        tk.Label(flood_frame, text="Link-State Database Sync Matrix (LSDB Status):", font=("Helvetica", 10, "bold"), fg="#34495e").pack(anchor=tk.W, pady=(5, 2))
-        self.flood_matrix_text = tk.Text(flood_frame, height=6, font=("Courier New", 9), bg="#f8f9fa", bd=1, relief=tk.SOLID)
+        tk.Label(flood_frame, text="LSDB Sync Matrix:", font=("Helvetica", 9, "bold"), fg="#34495e").pack(anchor=tk.W)
+        self.flood_matrix_text = tk.Text(flood_frame, height=5, font=("Courier New", 9), bg="#f8f9fa", bd=1, relief=tk.SOLID)
         self.flood_matrix_text.pack(fill=tk.X)
 
-        self.log_notebook_frame = ttk.Notebook(flood_frame)
-        self.log_notebook_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        # Notebook: Global Commentary | Convergence
+        nb = ttk.Notebook(flood_frame)
+        nb.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        tab_global = tk.Frame(nb)
+        tab_conv = tk.Frame(nb)
+        nb.add(tab_global, text=" Global Commentary Log ")
+        nb.add(tab_conv, text=" Convergence Log ")
 
-        self.tab_commentary_container = tk.Frame(self.log_notebook_frame)
-        self.tab_metrics_container = tk.Frame(self.log_notebook_frame)
-        
-        self.log_notebook_frame.add(self.tab_commentary_container, text=" Global Commentary Log ")
-        self.log_notebook_frame.add(self.tab_metrics_container, text=" Convergence Log ")
-
-        scrollbar_f = tk.Scrollbar(self.tab_commentary_container)
-        scrollbar_f.pack(side=tk.RIGHT, fill=tk.Y)
-        self.flood_log = tk.Text(self.tab_commentary_container, wrap=tk.WORD, font=("Helvetica", 9), bg="#efeef3", bd=0, padx=5, pady=5, yscrollcommand=scrollbar_f.set)
+        sb1 = tk.Scrollbar(tab_global)
+        sb1.pack(side=tk.RIGHT, fill=tk.Y)
+        self.flood_log = tk.Text(tab_global, wrap=tk.WORD, font=("Helvetica", 9), bg="#efeef3", bd=0, padx=4, pady=4, yscrollcommand=sb1.set)
         self.flood_log.pack(fill=tk.BOTH, expand=True)
-        scrollbar_f.config(command=self.flood_log.yview)
+        sb1.config(command=self.flood_log.yview)
 
-        scrollbar_c = tk.Scrollbar(self.tab_metrics_container)
-        scrollbar_c.pack(side=tk.RIGHT, fill=tk.Y)
-        self.convergence_log_box = tk.Text(self.tab_metrics_container, wrap=tk.WORD, font=("Courier New", 9), bg="#1e272e", fg="#ffffff", bd=0, padx=5, pady=5, yscrollcommand=scrollbar_c.set)
+        sb2 = tk.Scrollbar(tab_conv)
+        sb2.pack(side=tk.RIGHT, fill=tk.Y)
+        self.convergence_log_box = tk.Text(tab_conv, wrap=tk.WORD, font=("Courier New", 9), bg="#1e272e", fg="white", bd=0, padx=4, pady=4, yscrollcommand=sb2.set)
         self.convergence_log_box.pack(fill=tk.BOTH, expand=True)
-        scrollbar_c.config(command=self.convergence_log_box.yview)
+        sb2.config(command=self.convergence_log_box.yview)
 
         self.flood_log.tag_config("init", foreground="#7f8c8d")
         self.flood_log.tag_config("hello_tx", foreground="#0984e3", font=("Helvetica", 9, "bold"))
@@ -796,6 +961,8 @@ class aospfAsynchronousWorkspaceDashboard:
         self.flood_log.tag_config("dropped", foreground="#c0392b", font=("Helvetica", 9, "italic"))
         self.flood_log.tag_config("db_update", foreground="#8e44ad", font=("Helvetica", 9, "bold"))
         self.flood_log.tag_config("converged", foreground="#1b1464", background="#fff200", font=("Helvetica", 9, "bold"))
+        self.flood_log.tag_config("hmac_ok", foreground="#27ae60", font=("Helvetica", 9, "bold"))
+        self.flood_log.tag_config("hmac_fail", foreground="#ffffff", background="#c0392b", font=("Helvetica", 9, "bold"))
 
         self.convergence_log_box.tag_config("INITIAL", foreground="#2ecc71", font=("Courier New", 9, "bold"))
         self.convergence_log_box.tag_config("DISRUPTION", foreground="#f1c40f")

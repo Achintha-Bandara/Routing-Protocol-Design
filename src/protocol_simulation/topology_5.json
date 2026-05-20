@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    { "id": "A", "x": 0, "y": 4 },
+    { "id": "B", "x": 2, "y": 6 },
+    { "id": "C", "x": 2, "y": 2 },
+    { "id": "D", "x": 4, "y": 4 },
+    { "id": "E", "x": 6, "y": 4 }
+  ],
+  "edges": [
+    { "from": "A", "to": "B", "bandwidth": "500Mbps", "delay": 5 },
+    { "from": "A", "to": "C", "bandwidth": "100Mbps", "delay": 10 },
+    { "from": "B", "to": "D", "bandwidth": "200Mbps", "delay": 8 },
+    { "from": "C", "to": "D", "bandwidth": "50Mbps",  "delay": 15 },
+    { "from": "D", "to": "E", "bandwidth": "1Gbps",   "delay": 2 }
+  ]
+}
