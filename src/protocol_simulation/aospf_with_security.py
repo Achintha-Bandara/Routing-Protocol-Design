@@ -69,7 +69,7 @@ class aospfAsynchronousWorkspaceDashboard:
     def _load_topology(self):
         """Load network topology from topology.json file."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        topology_path = os.path.join(script_dir, 'topology.json')
+        topology_path = os.path.join(script_dir, 'topology_5.json')
         
         if not os.path.exists(topology_path):
             raise FileNotFoundError(
@@ -474,6 +474,13 @@ class aospfAsynchronousWorkspaceDashboard:
                                     link_prop_delay = get_current_delay(receiver, nbr, current_time)
                                     event_queue.append((current_time + link_prop_delay, "LSA_ARRIVE", (receiver, nbr, lsa_payload, link_prop_delay)))
                                     self.router_events[receiver].append((current_time, f"Flooded updated database LSA map forward onto route to Router {nbr}.", "sent"))
+                            
+                            # --- DATABASE EXCHANGE: Send all known LSAs to the new neighbor ---
+                            for lsa_owner, lsa_entry in current_lsdb[receiver].items():
+                                if lsa_owner != receiver:  # Own LSA already sent above
+                                    link_prop_delay = get_current_delay(receiver, sender, current_time)
+                                    event_queue.append((current_time + link_prop_delay, "LSA_ARRIVE", (receiver, sender, lsa_entry, link_prop_delay)))
+                                    self.router_events[receiver].append((current_time, f"DB Exchange: Sent cached LSA [Router_{lsa_owner}] to new neighbor Router {sender}.", "sent"))
                         else:
                             self.logs_database.append({
                                 "time": current_time,
