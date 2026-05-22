@@ -11,6 +11,13 @@ import os
 # NO HMAC SECURITY LAYER - All LSAs accepted as is
 # -------------------------------------------------------
 
+def format_time(ms_total):
+    if ms_total < 0: return "00:00:00:000"
+    seconds, milliseconds = divmod(int(ms_total), 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{milliseconds:03d}"
+
 class OSPFAsynchronousWorkspaceDashboard:
     def __init__(self, root):
         self.root = root
@@ -180,7 +187,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self._rebuild_history()
         self.render_all_views()
         self.security_banner.config(
-            text=f"ATTACK LSA injected at t={self.attack_inject_time}ms",
+            text=f"ATTACK LSA injected at t={format_time(self.attack_inject_time)}",
             bg="#c0392b", fg="white"
         )
 
@@ -963,7 +970,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         # Convergence indicator
         if state["is_true_converged"]:
             self.convergence_indicator_lbl.config(
-                text=f"CONVERGED & STABLE  [t={state['true_convergence_time']}ms]", bg="#d4edda", fg="#155724")
+                text=f"CONVERGED & STABLE  [t={format_time(state['true_convergence_time'])}]", bg="#d4edda", fg="#155724")
         elif state["is_protocol_converged"]:
             self.convergence_indicator_lbl.config(text="Stable but Inaccurate", bg="#fff3cd", fg="#856404")
         else:
@@ -1008,7 +1015,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         for log_t, text, tag in self.router_events[target]:
             if log_t <= T:
                 found = True
-                self.local_router_log_box.insert(tk.END, f"[{log_t}ms] {text}\n", tag)
+                self.local_router_log_box.insert(tk.END, f"[{format_time(log_t)}] {text}\n", tag)
         if not found:
             self.local_router_log_box.insert(tk.END, "No events recorded yet.")
         self.local_router_log_box.config(state=tk.DISABLED)
@@ -1075,7 +1082,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.flood_log.delete('1.0', tk.END)
         for e in self.logs_database:
             if e["time"] <= T:
-                self.flood_log.insert(tk.END, f"[{e['time']}ms] {e['text']}\n", e["type"])
+                self.flood_log.insert(tk.END, f"[{format_time(e['time'])}] {e['text']}\n", e["type"])
         self.flood_log.config(state=tk.DISABLED)
         self.flood_log.see(tk.END)
 
@@ -1086,7 +1093,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         for item in self.convergence_metrics_database:
             if item["time"] <= T:
                 found_metrics = True
-                self.convergence_log_box.insert(tk.END, f"[{item['time']}ms] {item['text']}\n", item["type"])
+                self.convergence_log_box.insert(tk.END, f"[{format_time(item['time'])}] {item['text']}\n", item["type"])
         if not found_metrics:
             self.convergence_log_box.insert(tk.END, "No convergence events yet.")
         self.convergence_log_box.config(state=tk.DISABLED)

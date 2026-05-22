@@ -7,6 +7,13 @@ import sys
 import json
 import os
 
+def format_time(ms_total):
+    if ms_total < 0: return "00:00:00:000"
+    seconds, milliseconds = divmod(int(ms_total), 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{milliseconds:03d}"
+
 class OSPFAsynchronousWorkspaceDashboard:
     def __init__(self, root):
         self.root = root
@@ -582,7 +589,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                         self.convergence_metrics_database.append({
                             "time": current_time,
                             "type": "INITIAL",
-                            "text": f"📌 [Initial Network Initialization Pass]\n• Time to Reach Initial Synchronization: {current_time} ms from system boot frame.\n"
+                            "text": f"📌 [Initial Network Initialization Pass]\n• Time to Reach Initial Synchronization: {format_time(current_time)} from system boot frame.\n"
                         })
                     
                     for item in list(pending_failure_tracks):
@@ -596,8 +603,8 @@ class OSPFAsynchronousWorkspaceDashboard:
                             
                             msg = (
                                 f"⚡ [Link Failure Recovery Profile: Interrupted Interface Path {u} - {v}]\n"
-                                f"  • Total Time to Synchronize After Physical Link Failure: {duration_from_fail} ms (Disrupted at t={t_fail} ms)\n"
-                                f"  • Time to Synchronize After Fault Detection (Dead Timer Expiry): {duration_from_timeout} ms (Alerted at t={t_timeout} ms)\n"
+                                f"  • Total Time to Synchronize After Physical Link Failure: {format_time(duration_from_fail)} (Disrupted at {format_time(t_fail)})\n"
+                                f"  • Time to Synchronize After Fault Detection (Dead Timer Expiry): {format_time(duration_from_timeout)} (Alerted at {format_time(t_timeout)})\n"
                             )
                             # Pre-write verification filter to prevent duplicate inserts during sequential visual step iterations
                             if not any(x["text"] == msg and x["time"] == current_time for x in self.convergence_metrics_database):
@@ -937,7 +944,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         # 2. Dynamic Convergence Presentation Engine Supporting the Three Protocol States
         if state["is_true_converged"]:
             self.convergence_indicator_lbl.config(
-                text=f"🟢 Topology Converged & Stable [Time: {state['true_convergence_time']} ms]", 
+                text=f"🟢 Topology Converged & Stable [Time: {format_time(state['true_convergence_time'])}]", 
                 bg="#d4edda", fg="#155724"
             )
         elif state["is_protocol_converged"]:
@@ -968,7 +975,7 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         self.packet_header_lbl.config(text=f"LSA Packet Structure Data: Router {target}")
         self.local_log_header_lbl.config(text=f"Contextual Local Port Transmissions Log for Router {target}:")
-        self.table_header_lbl.config(text=f"OSPF Routing Table ({current_clock_time} ms Database Snapshot): Router {target}")
+        self.table_header_lbl.config(text=f"OSPF Routing Table ({format_time(current_clock_time)} Database Snapshot): Router {target}")
         
         self.lsa_view_box.delete('1.0', tk.END)
         if target in known_lsas_payloads:
@@ -987,7 +994,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         for log_time, narrative_text, log_type in self.router_events[target]:
             if log_time <= current_clock_time:
                 any_local_events = True
-                self.local_router_log_box.insert(tk.END, f"[{log_time} ms] {narrative_text}\n", log_type)
+                self.local_router_log_box.insert(tk.END, f"[{format_time(log_time)}] {narrative_text}\n", log_type)
         if not any_local_events:
             self.local_router_log_box.insert(tk.END, "No local port interface transitions recorded yet.", "init")
         self.local_router_log_box.config(state=tk.DISABLED)
@@ -1038,7 +1045,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.flood_log.delete('1.0', tk.END)
         for entry in self.logs_database:
             if entry["time"] <= current_clock_time:
-                self.flood_log.insert(tk.END, f"[{entry['time']} ms] {entry['text']}\n", entry["type"])
+                self.flood_log.insert(tk.END, f"[{format_time(entry['time'])}] {entry['text']}\n", entry["type"])
         self.flood_log.config(state=tk.DISABLED)
         self.flood_log.see(tk.END)
 
@@ -1049,7 +1056,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         for item in self.convergence_metrics_database:
             if item["time"] <= current_clock_time:
                 any_metrics_found = True
-                self.convergence_log_box.insert(tk.END, f"[{item['time']} ms] {item['text']}\n", item["type"])
+                self.convergence_log_box.insert(tk.END, f"[{format_time(item['time'])}] {item['text']}\n", item["type"])
         if not any_metrics_found:
             self.convergence_log_box.insert(tk.END, "No stabilization transitions or re-convergence logs calculated up to this millisecond boundary.")
         self.convergence_log_box.config(state=tk.DISABLED)
@@ -1126,7 +1133,7 @@ class OSPFAsynchronousWorkspaceDashboard:
             edge_labels[(u, v)] = f"{status_text}\nbw:{bw}\n({active_delay_render}ms)"
         nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=edge_labels, font_size=9, font_weight='bold', ax=self.ax_f)
 
-        self.ax_f.set_title(f"Asynchronous OSPF Flooding Clock: {current_clock_time} ms", fontsize=12, fontweight='bold', color="#2c3e50")
+        self.ax_f.set_title(f"Asynchronous OSPF Flooding Clock: {format_time(current_clock_time)}", fontsize=12, fontweight='bold', color="#2c3e50")
         self.ax_f.axis('off')
         self.canvas_f.draw()
 
