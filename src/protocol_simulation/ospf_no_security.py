@@ -70,7 +70,8 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.node_processing_delay = 3
         self.simulation_started = False
         self.current_time_ms = 0
-        self.max_sim_time = 25000
+        self.simulation_running = False
+        self.after_id = None
         self.selected_edge = None
         self.link_toggles = []
         self.delay_changes = []
@@ -98,19 +99,46 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.selected_edge = None
         self.attack_injected = False
         self.attack_inject_time = None
-        self.run_continuous_event_simulation()
+        self.sim_generator = self.run_continuous_event_simulation()
+        next(self.sim_generator)
         self.simulation_started = True
+        self.simulation_running = True
         self.hello_combo.config(state="disabled")
-        self.start_btn.config(state="disabled")
+        self.start_btn.config(text="⏸ Pause", command=self.toggle_pause)
         self.attack_btn.config(state="normal")
         self.prev_btn.config(state="normal")
         self.next_btn.config(state="normal")
         self.sync_btn.config(state="normal")
         self.reset_btn.config(state="normal")
         self.render_all_views()
+        self.auto_step()
+
+    def toggle_pause(self):
+        if not self.simulation_started: return
+        self.simulation_running = not self.simulation_running
+        if self.simulation_running:
+            self.start_btn.config(text="⏸ Pause")
+            self.auto_step()
+        else:
+            self.start_btn.config(text="▶ Play")
+
+    def auto_step(self):
+        if not self.simulation_running:
+            return
+        step = int(self.step_combo.get())
+        target = self.current_time_ms + step
+        while len(self.timeline_states) <= target:
+            next(self.sim_generator)
+        self.current_time_ms = target
+        self.render_all_views()
+        self.after_id = self.root.after(50, self.auto_step)
 
     def reset_simulation(self):
+        if self.after_id:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
         self.simulation_started = False
+        self.simulation_running = False
         self.current_time_ms = 0
         self.selected_edge = None
         self.link_toggles = []
@@ -119,7 +147,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.attack_injected = False
         self.attack_inject_time = None
         self.hello_combo.config(state="readonly")
-        self.start_btn.config(state="normal")
+        self.start_btn.config(text="Start Simulation 🚀", command=self.start_simulation, state="normal")
         self.attack_btn.config(state="disabled")
         self.prev_btn.config(state="disabled")
         self.next_btn.config(state="disabled")
@@ -149,7 +177,7 @@ class OSPFAsynchronousWorkspaceDashboard:
             return
         self.attack_injected = True
         self.attack_inject_time = self.current_time_ms
-        self.run_continuous_event_simulation()
+        self._rebuild_history()
         self.render_all_views()
         self.security_banner.config(
             text=f"ATTACK LSA injected at t={self.attack_inject_time}ms",
@@ -159,7 +187,7 @@ class OSPFAsynchronousWorkspaceDashboard:
     def toggle_selected_link(self):
         if self.selected_edge and self.simulation_started:
             self.link_toggles.append((self.selected_edge, self.current_time_ms))
-            self.run_continuous_event_simulation()
+            self._rebuild_history()
             self.render_all_views()
 
     def apply_runtime_delay_change(self, event=None):
@@ -172,7 +200,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                 "text": f"PROPAGATION MOD: delay on {u}-{v} changed to {new_delay}ms.",
                 "routers": [u, v], "type": "process"
             })
-            self.run_continuous_event_simulation()
+            self._rebuild_history()
             self.render_all_views()
 
     def apply_runtime_cost_change(self, event=None):
@@ -185,16 +213,18 @@ class OSPFAsynchronousWorkspaceDashboard:
                 "text": f"COST MOD: OSPF cost on {u}-{v} changed to {new_cost}. Re-flooding triggered.",
                 "routers": [u, v], "type": "process"
             })
-            self.run_continuous_event_simulation()
+            self._rebuild_history()
             self.render_all_views()
 
     def skip_to_synchronize(self):
         if self.simulation_started:
             t = self.current_time_ms
             if self.timeline_states[t]["is_true_converged"]:
-                while t <= self.max_sim_time and self.timeline_states[t]["is_true_converged"]:
+                while self.timeline_states[t]["is_true_converged"]:
                     t += 1
-            while t <= self.max_sim_time:
+                    while len(self.timeline_states) <= t: next(self.sim_generator)
+            while True:
+                while len(self.timeline_states) <= t: next(self.sim_generator)
                 if self.timeline_states[t]["is_true_converged"]:
                     self.current_time_ms = t
                     break
@@ -204,6 +234,12 @@ class OSPFAsynchronousWorkspaceDashboard:
     # -------------------------------------------------------
     # DISCRETE EVENT SIMULATION ENGINE (NO HMAC)
     # -------------------------------------------------------
+    def _rebuild_history(self):
+        self.sim_generator = self.run_continuous_event_simulation()
+        self.timeline_states = {}
+        for _ in range(self.current_time_ms + 1):
+            next(self.sim_generator)
+
     def run_continuous_event_simulation(self):
         nodes = sorted(list(self.G.nodes()))
 
@@ -253,7 +289,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         last_true_instability = 0
         current_time = 0
 
-        while current_time <= self.max_sim_time:
+        while True:
             active_protocol_disruption = False
 
             # Runtime link toggles
@@ -600,6 +636,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                 "get_delay_func": get_current_delay,
                 "get_cost_func": get_current_cost
             }
+            yield current_time
             current_time += 1
 
     # -------------------------------------------------------
@@ -1009,9 +1046,11 @@ class OSPFAsynchronousWorkspaceDashboard:
 
     def next_timeline_step(self):
         step = int(self.step_combo.get())
-        if self.current_time_ms < self.max_sim_time:
-            self.current_time_ms = min(self.max_sim_time, self.current_time_ms + step)
-            self.render_all_views()
+        target = self.current_time_ms + step
+        while len(self.timeline_states) <= target:
+            next(self.sim_generator)
+        self.current_time_ms = target
+        self.render_all_views()
 
     def prev_timeline_step(self):
         step = int(self.step_combo.get())
