@@ -3,7 +3,7 @@
 This directory contains standalone, real-time discrete event simulators. Each file implements a specific version of a routing protocol with an integrated dashboard.
 
 ## Important Note
-Each simulation file in this directory is **independent** and should be run separately. They do not rely on a central launcher.
+Each simulation file in this directory is **independent** and should be run separately.
 
 ## Available Simulators
 
@@ -14,11 +14,11 @@ The primary research implementation.
 
 ### 2. Standard OSPF - `ospf.py`
 The baseline implementation for comparison.
-- Uses standard OSPF timers (10s Hello, 40s Dead).
+- Uses standard OSPF timers.
 - Standard flooding mechanisms.
 
 ### 3. Security Variants
-- **`ospf_with_security.py`**: Implementation with cryptographic hash verification for adjacency.
+- **`aospf_with_security.py`**: Implementation with cryptographic hash verification for adjacency.
 - **`ospf_no_security.py`**: Implementation with security features disabled for performance comparison.
 
 ## How to Run
