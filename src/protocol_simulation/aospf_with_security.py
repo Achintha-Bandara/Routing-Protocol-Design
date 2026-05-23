@@ -61,10 +61,11 @@ class AOSPFAsynchronousWorkspaceDashboard:
         self.hello_interval = 3000
         self.dead_interval = 10000
 
-        # Composite Cost Formula Parameters
+        # Composite Cost Formula Parameters (Log-Bandwidth Model)
         self.w1 = 10.0
         self.w2 = 1.0
         self.L_max = 50.0  # Normalized maximum delay bound matching UI dropdown options
+        self.BW_max = 1000.0  # Maximum reference bandwidth in Mbps (1 Gbps)
 
         # Persistent Global Convergence Database Metrics Buffer
         self.convergence_metrics_database = []
@@ -359,11 +360,10 @@ class AOSPFAsynchronousWorkspaceDashboard:
                     base_delay = mod_delay
             return base_delay
 
-        # Helper to compute time-dependent link AOSPF base costs
-        def get_current_cost(u_node, v_node, eval_time):
+        # Helper to retrieve link bandwidth in Mbps for log-bandwidth cost model
+        def get_link_bandwidth(u_node, v_node):
             e_tuple = tuple(sorted((u_node, v_node)))
-            base_cost = self.original_edges_data[e_tuple]['cost']
-            return base_cost
+            return self.original_edges_data[e_tuple]['bandwidth_mbps']
 
         # --- SEED INITIAL HELLO TRANSMISSION EVENTS ---
         self.logs_database.append({
@@ -480,16 +480,18 @@ class AOSPFAsynchronousWorkspaceDashboard:
                     
                     # --- DYNAMIC COMPOSITE COST MATHEMATICAL EXTRACTION ENGINE ---
                     measured_delay = current_time - sent_time
-                    base_cost = get_current_cost(receiver, sender, current_time)
+                    link_bw = get_link_bandwidth(receiver, sender)
                     
-                    # Execute composite formula algebra pass
-                    temp_cost = math.ceil(self.w1 * (measured_delay / self.L_max) + self.w2 * base_cost)
+                    # Execute log-bandwidth composite formula: w1*(L/L_max) + w2*(-log(BW/BW_max))
+                    bw_ratio = max(link_bw / self.BW_max, 1e-9)  # Guard against log(0)
+                    temp_cost = self.w1 * (measured_delay / self.L_max) + self.w2 * (-math.log(bw_ratio))
+                    temp_cost = max(1, math.ceil(temp_cost))  # Ensure minimum cost of 1
                     old_advertised_cost = advertised_costs[receiver][sender]
                     
                     # Detailed cost breakdown audit parameters logged natively inside the transmission log profile
                     comparison_msg = (
                         f"Cost Evaluation for link to {sender}: Measured Delay = {measured_delay}ms -> Temp Cost = {temp_cost} "
-                        f"(w1*L/Lmax + w2*C_base = {self.w1}*({measured_delay}/{self.L_max}) + {self.w2}*{base_cost}). "
+                        f"(w1*(L/Lmax) + w2*(-log(BW/BWmax)) = {self.w1}*({measured_delay}/{self.L_max}) + {self.w2}*(-log({link_bw}/{self.BW_max}))). "
                         f"Previous Advertised Cost = {old_advertised_cost}."
                     )
                     self.router_events[receiver].append((current_time, comparison_msg, "hello_rx"))
@@ -720,8 +722,9 @@ class AOSPFAsynchronousWorkspaceDashboard:
                 if edge_tuple in broken_links:
                     continue
                 l_delay = get_current_delay(u_node, v_node, current_time)
-                b_cost = get_current_cost(u_node, v_node, current_time)
-                true_cost = math.ceil(self.w1 * (l_delay / self.L_max) + self.w2 * b_cost)
+                link_bw = get_link_bandwidth(u_node, v_node)
+                bw_ratio = max(link_bw / self.BW_max, 1e-9)
+                true_cost = max(1, math.ceil(self.w1 * (l_delay / self.L_max) + self.w2 * (-math.log(bw_ratio))))
                 
                 old_u = advertised_costs[u_node][v_node]
                 old_v = advertised_costs[v_node][u_node]
@@ -845,7 +848,7 @@ class AOSPFAsynchronousWorkspaceDashboard:
                 "is_true_converged": is_true_converged,
                 "true_convergence_time": last_true_instability if is_true_converged else -1,
                 "get_delay_func": get_current_delay,
-                "get_cost_func":  get_current_cost,
+                "get_bw_func":  get_link_bandwidth,
                 "advertised_costs": {n: dict(advertised_costs[n]) for n in nodes},
                 "is_delay_cost_discrepancy": is_delay_cost_discrepancy
             }
