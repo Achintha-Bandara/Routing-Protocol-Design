@@ -1,11 +1,12 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import networkx as nx
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import sys
 import json
 import os
+import glob
 
 # -------------------------------------------------------
 # NO HMAC SECURITY LAYER - All LSAs accepted as is
@@ -31,14 +32,45 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.attack_inject_time = None
 
         self.G = nx.Graph()
-        self._load_topology()
+        self.node_positions = {}
+        self.original_edges_data = {}
+        self.edges_definition = []
+        self.selected_node = 'A'
 
-    # ----------------------------------------------------------
-    def _load_topology(self):
+        # Lifecycle state (must exist before setup_ui → reset_simulation)
+        self.simulation_started = False
+        self.current_time_ms = 0
+        self.simulation_running = False
+        self.after_id = None
+        self.selected_edge = None
+        self.link_toggles = []
+        self.delay_changes = []
+        self.cost_changes = []
+        self.node_processing_delay = 3
+
+        self.setup_ui()
+        self._populate_topology_combo()
+        self._load_topology(self.topology_combo.get())
+        self.reset_simulation()
+
+    # -------------------------------------------------------
+    # TOPOLOGY DISCOVERY & LOADING
+    # -------------------------------------------------------
+    def _populate_topology_combo(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        topology_path = os.path.join(script_dir, 'topology_5.json')
+        pattern = os.path.join(script_dir, 'topology_*.json')
+        found = sorted([os.path.basename(p) for p in glob.glob(pattern)])
+        if not found:
+            found = ['topology_5.json']
+        self.topology_combo['values'] = found
+        self.topology_combo.set(found[0])
+
+    def _load_topology(self, filename: str):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        topology_path = os.path.join(script_dir, filename)
         if not os.path.exists(topology_path):
-            raise FileNotFoundError(f"topology.json not found at: {topology_path}")
+            messagebox.showerror("Topology Not Found", f"Could not find:\n{topology_path}")
+            return
 
         with open(topology_path, 'r') as f:
             data = json.load(f)
@@ -74,17 +106,11 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         all_nodes = sorted(self.node_positions.keys())
         self.selected_node = all_nodes[0] if all_nodes else 'A'
-        self.node_processing_delay = 3
-        self.simulation_started = False
-        self.current_time_ms = 0
-        self.simulation_running = False
-        self.after_id = None
-        self.selected_edge = None
-        self.link_toggles = []
-        self.delay_changes = []
-        self.cost_changes = []
 
-        self.setup_ui()
+    def on_topology_change(self, event=None):
+        if self.simulation_started:
+            return
+        self._load_topology(self.topology_combo.get())
         self.reset_simulation()
 
     def on_closing(self):
@@ -110,6 +136,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         next(self.sim_generator)
         self.simulation_started = True
         self.simulation_running = True
+        self.topology_combo.config(state="disabled")
         self.hello_combo.config(state="disabled")
         self.start_btn.config(text="⏸ Pause", command=self.toggle_pause)
         self.attack_btn.config(state="normal")
@@ -153,6 +180,7 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.cost_changes = []
         self.attack_injected = False
         self.attack_inject_time = None
+        self.topology_combo.config(state="readonly")
         self.hello_combo.config(state="readonly")
         self.start_btn.config(text="Start Simulation 🚀", command=self.start_simulation, state="normal")
         self.attack_btn.config(state="disabled")
@@ -285,7 +313,6 @@ class OSPFAsynchronousWorkspaceDashboard:
         for n in nodes:
             event_queue.append((0, "HELLO_SEND", (n,)))
 
-        # Seed attack event if requested
         if self.attack_injected and self.attack_inject_time is not None:
             event_queue.append((self.attack_inject_time, "FAKE_LSA_INJECT", ()))
 
@@ -299,39 +326,28 @@ class OSPFAsynchronousWorkspaceDashboard:
         while True:
             active_protocol_disruption = False
 
-            # Runtime link toggles
             for edge, toggle_time in self.link_toggles:
                 if toggle_time == current_time:
                     u, v = edge
                     if edge in broken_links:
                         broken_links.remove(edge)
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": f"LINK RESTORED: {u}↔{v} is UP. Awaiting periodic HELLO rediscovery.",
-                            "routers": [u, v], "type": "process"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"LINK RESTORED: {u}↔{v} is UP. Awaiting periodic HELLO rediscovery.", "routers": [u, v], "type": "process"})
                         self.router_events[u].append((current_time, f"Link to {v} restored. Waiting for HELLO.", "init"))
                         self.router_events[v].append((current_time, f"Link to {u} restored. Waiting for HELLO.", "init"))
                     else:
                         broken_links.add(edge)
                         pending_failure_tracks.append({"edge": edge, "t_fail": current_time, "t_timeout": None})
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": f"LINK SEVERED: {u}↔{v} is DOWN. Dropping packets, waiting for dead timer.",
-                            "routers": [u, v], "type": "dropped"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"LINK SEVERED: {u}↔{v} is DOWN. Dropping packets, waiting for dead timer.", "routers": [u, v], "type": "dropped"})
                         self.router_events[u].append((current_time, f"Link to {v} broken. Dead timer running.", "dropped"))
                         self.router_events[v].append((current_time, f"Link to {u} broken. Dead timer running.", "dropped"))
 
-            # Runtime cost changes
             for edge, new_c, c_time in self.cost_changes:
                 if c_time == current_time:
                     u, v = edge
                     active_protocol_disruption = True
                     for r in [u, v]:
                         lsa_seq[r] += 1
-                        active_nbrs = {k: get_current_cost(r, k, current_time)
-                                       for k in self.G.neighbors(r) if adj_states[r][k] == "2WAY"}
+                        active_nbrs = {k: get_current_cost(r, k, current_time) for k in self.G.neighbors(r) if adj_states[r][k] == "2WAY"}
                         lsa_payload = {"router_id": r, "sequence_num": lsa_seq[r], "ttl": 64, "neighbors": active_nbrs}
                         current_lsdb[r][r] = lsa_payload
                         self.router_events[r].append((current_time, f"Cost change triggered new LSA (Seq:{lsa_seq[r]}).", "db_update"))
@@ -340,7 +356,6 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 d = get_current_delay(r, fn, current_time)
                                 event_queue.append((current_time + d, "LSA_ARRIVE", (r, fn, lsa_payload, d)))
 
-            # Dead timer checks
             for u in nodes:
                 for nbr in self.G.neighbors(u):
                     if adj_states[u][nbr] in ["INIT", "2WAY"]:
@@ -351,15 +366,10 @@ class OSPFAsynchronousWorkspaceDashboard:
                             for item in pending_failure_tracks:
                                 if item["edge"] == te and item["t_timeout"] is None:
                                     item["t_timeout"] = current_time
-                            self.logs_database.append({
-                                "time": current_time,
-                                "text": f"DEAD TIMER EXPIRED: Router {u} lost adjacency to Router {nbr} ({self.dead_interval}ms without HELLO). Adjacency torn down.",
-                                "routers": [u, nbr], "type": "dropped"
-                            })
+                            self.logs_database.append({"time": current_time, "text": f"DEAD TIMER EXPIRED: Router {u} lost adjacency to Router {nbr} ({self.dead_interval}ms without HELLO). Adjacency torn down.", "routers": [u, nbr], "type": "dropped"})
                             self.router_events[u].append((current_time, f"Dead timer expired for {nbr}. Adjacency DOWN.", "dropped"))
                             lsa_seq[u] += 1
-                            active_nbrs = {k: get_current_cost(u, k, current_time)
-                                           for k in self.G.neighbors(u) if adj_states[u][k] == "2WAY"}
+                            active_nbrs = {k: get_current_cost(u, k, current_time) for k in self.G.neighbors(u) if adj_states[u][k] == "2WAY"}
                             lsa_payload = {"router_id": u, "sequence_num": lsa_seq[u], "ttl": 64, "neighbors": active_nbrs}
                             current_lsdb[u][u] = lsa_payload
                             self.router_events[u].append((current_time, f"Issued corrective LSA (Seq:{lsa_seq[u]}) removing {nbr}.", "db_update"))
@@ -374,23 +384,17 @@ class OSPFAsynchronousWorkspaceDashboard:
             while event_queue and event_queue[0][0] == current_time:
                 t_curr, ev_type, data = event_queue.pop(0)
 
-                # ── HELLO_SEND ──
                 if ev_type == "HELLO_SEND":
                     router = data[0]
                     active_neighbors = [k for k, v in adj_states[router].items() if v in ["INIT", "2WAY"]]
                     if current_time > 0:
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": f"HELLO sent from Router {router} (active neighbors: {active_neighbors}).",
-                            "routers": [router], "type": "hello_tx"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"HELLO sent from Router {router} (active neighbors: {active_neighbors}).", "routers": [router], "type": "hello_tx"})
                         self.router_events[router].append((current_time, "Sent periodic HELLO broadcast.", "hello_tx"))
                     for nbr in self.G.neighbors(router):
                         d = get_current_delay(router, nbr, current_time)
                         event_queue.append((current_time + d, "HELLO_ARRIVE", (router, nbr, list(active_neighbors), d)))
                     event_queue.append((current_time + self.hello_interval, "HELLO_SEND", (router,)))
 
-                # ── HELLO_ARRIVE ──
                 elif ev_type == "HELLO_ARRIVE":
                     sender, receiver, sender_nbr_list, link_delay = data
                     if tuple(sorted((sender, receiver))) in broken_links:
@@ -403,35 +407,23 @@ class OSPFAsynchronousWorkspaceDashboard:
                             self.router_events[receiver].append((current_time, f"2-WAY adjacency formed with Router {sender}.", "hello_rx"))
                             lsa_triggered[receiver] = True
                             lsa_seq[receiver] += 1
-                            active_nbrs = {k: get_current_cost(receiver, k, current_time)
-                                           for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
+                            active_nbrs = {k: get_current_cost(receiver, k, current_time) for k in self.G.neighbors(receiver) if adj_states[receiver][k] == "2WAY"}
                             lsa_payload = {"router_id": receiver, "sequence_num": lsa_seq[receiver], "ttl": 64, "neighbors": active_nbrs}
                             current_lsdb[receiver][receiver] = lsa_payload
-                            self.logs_database.append({
-                                "time": current_time,
-                                "text": (f"[LSA GENERATED] Router {receiver} generated its Router-LSA "
-                                         f"(Seq:{lsa_seq[receiver]}, neighbors:{list(active_nbrs.keys())})"),
-                                "routers": [receiver], "type": "db_update"
-                            })
+                            self.logs_database.append({"time": current_time, "text": f"[LSA GENERATED] Router {receiver} generated Router-LSA (Seq:{lsa_seq[receiver]}, neighbors:{list(active_nbrs.keys())})", "routers": [receiver], "type": "db_update"})
                             self.router_events[receiver].append((current_time, f"Stored own LSA (Seq:{lsa_seq[receiver]}).", "db_update"))
                             for nbr in self.G.neighbors(receiver):
                                 if adj_states[receiver][nbr] == "2WAY":
                                     d = get_current_delay(receiver, nbr, current_time)
                                     event_queue.append((current_time + d, "LSA_ARRIVE", (receiver, nbr, lsa_payload, d)))
                                     self.router_events[receiver].append((current_time, f"Flooded LSA to Router {nbr}.", "sent"))
-                            
-                            # --- DATABASE EXCHANGE: Send all known LSAs to the new neighbor ---
                             for lsa_owner, lsa_entry in current_lsdb[receiver].items():
-                                if lsa_owner != receiver:  # Own LSA already sent above
+                                if lsa_owner != receiver:
                                     d = get_current_delay(receiver, sender, current_time)
                                     event_queue.append((current_time + d, "LSA_ARRIVE", (receiver, sender, lsa_entry, d)))
                                     self.router_events[receiver].append((current_time, f"DB Exchange: Sent cached LSA [Router_{lsa_owner}] to new neighbor Router {sender}.", "sent"))
                         else:
-                            self.logs_database.append({
-                                "time": current_time,
-                                "text": f"HELLO received at Router {receiver} from Router {sender}. Dead timer refreshed.",
-                                "routers": [sender, receiver], "type": "hello_rx"
-                            })
+                            self.logs_database.append({"time": current_time, "text": f"HELLO received at Router {receiver} from Router {sender}. Dead timer refreshed.", "routers": [sender, receiver], "type": "hello_rx"})
                             self.router_events[receiver].append((current_time, f"HELLO from {sender} — dead timer reset to {self.dead_interval}ms.", "hello_rx"))
                     else:
                         if adj_states[receiver][sender] == "DOWN":
@@ -442,56 +434,25 @@ class OSPFAsynchronousWorkspaceDashboard:
                             reactive_nbrs = [k for k, v in adj_states[receiver].items() if v in ["INIT", "2WAY"]]
                             event_queue.append((t_resp, "HELLO_ARRIVE", (receiver, sender, list(reactive_nbrs), link_delay)))
 
-                # ── LSA_ARRIVE (NO HMAC VERIFICATION – ALWAYS ACCEPT) ──
                 elif ev_type == "LSA_ARRIVE":
                     sender, receiver, incoming_payload, link_delay = data
                     if tuple(sorted((sender, receiver))) in broken_links:
-                        # Only skip broken-link check for ATTACK (not in graph)
                         if sender != "ATTACK":
                             continue
-
                     active_protocol_disruption = True
                     owner = incoming_payload["router_id"]
-
-                    # NO HMAC VERIFICATION – simply log acceptance
-                    self.logs_database.append({
-                        "time": current_time,
-                        "text": (f"[LSA ARRIVAL] Router {receiver} received LSA from {sender} "
-                                 f"(Origin: Router_{owner}, Seq:{incoming_payload['sequence_num']})  →  "
-                                 f"ACCEPTED (no HMAC verification)"),
-                        "routers": [sender, receiver],
-                        "type": "received"
-                    })
-                    self.router_events[receiver].append((
-                        current_time,
-                        f"LSA from {sender} (Origin:{owner}, Seq:{incoming_payload['sequence_num']}) accepted.",
-                        "received"
-                    ))
-
-                    # Always check sequence number and process
+                    self.logs_database.append({"time": current_time, "text": f"[LSA ARRIVAL] Router {receiver} received LSA from {sender} (Origin: Router_{owner}, Seq:{incoming_payload['sequence_num']})  →  ACCEPTED (no HMAC verification)", "routers": [sender, receiver], "type": "received"})
+                    self.router_events[receiver].append((current_time, f"LSA from {sender} (Origin:{owner}, Seq:{incoming_payload['sequence_num']}) accepted.", "received"))
                     cached_seq = current_lsdb[receiver].get(owner, {}).get("sequence_num", 0)
                     if incoming_payload["sequence_num"] > cached_seq:
                         t_proc = current_time + self.node_processing_delay
                         event_queue.append((t_proc, "LSA_PROCESS", (receiver, incoming_payload, sender)))
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": (f"[ACCEPTED] Router {receiver}: LSA for Router_{owner} "
-                                     f"Seq {incoming_payload['sequence_num']} > cached {cached_seq}. "
-                                     f"Scheduled LSDB install in +{self.node_processing_delay}ms."),
-                            "routers": [receiver], "type": "received"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"[ACCEPTED] Router {receiver}: LSA for Router_{owner} Seq {incoming_payload['sequence_num']} > cached {cached_seq}. Scheduled LSDB install in +{self.node_processing_delay}ms.", "routers": [receiver], "type": "received"})
                         self.router_events[receiver].append((current_time, f"LSA accepted (Seq {incoming_payload['sequence_num']} > cached {cached_seq}). Processing in +{self.node_processing_delay}ms.", "process"))
                     else:
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": (f"[DUPLICATE SUPPRESSED] Router {receiver}: LSA for Router_{owner} "
-                                     f"Seq {incoming_payload['sequence_num']} already cached "
-                                     f"(cached seq={cached_seq}). No action needed."),
-                            "routers": [receiver], "type": "process"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"[DUPLICATE SUPPRESSED] Router {receiver}: LSA for Router_{owner} Seq {incoming_payload['sequence_num']} already cached (cached seq={cached_seq}). No action needed.", "routers": [receiver], "type": "process"})
                         self.router_events[receiver].append((current_time, f"Duplicate LSA for {owner} (Seq {incoming_payload['sequence_num']} ≤ {cached_seq}). Suppressed.", "dropped"))
 
-                # ── LSA_PROCESS ──
                 elif ev_type == "LSA_PROCESS":
                     router, incoming_payload, arrival_port = data
                     active_protocol_disruption = True
@@ -499,13 +460,7 @@ class OSPFAsynchronousWorkspaceDashboard:
                     cached_seq = current_lsdb[router].get(owner, {}).get("sequence_num", 0)
                     if incoming_payload["sequence_num"] > cached_seq:
                         current_lsdb[router][owner] = incoming_payload
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": (f"[LSDB UPDATED] Router {router} installed Router_{owner} LSA "
-                                     f"(Seq:{incoming_payload['sequence_num']}, "
-                                     f"neighbors:{list(incoming_payload['neighbors'].keys())})."),
-                            "routers": [router], "type": "db_update"
-                        })
+                        self.logs_database.append({"time": current_time, "text": f"[LSDB UPDATED] Router {router} installed Router_{owner} LSA (Seq:{incoming_payload['sequence_num']}, neighbors:{list(incoming_payload['neighbors'].keys())}).", "routers": [router], "type": "db_update"})
                         self.router_events[router].append((current_time, f"Installed Router_{owner} LSA in LSDB (Seq:{incoming_payload['sequence_num']}).", "db_update"))
                         for nbr in self.G.neighbors(router):
                             if nbr != arrival_port and adj_states[router][nbr] == "2WAY":
@@ -513,32 +468,13 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 event_queue.append((current_time + d, "LSA_ARRIVE", (router, nbr, incoming_payload, d)))
                                 self.router_events[router].append((current_time, f"Re-flooded Router_{owner} LSA to Router {nbr}.", "sent"))
 
-                # ── FAKE_LSA_INJECT (no HMAC, will be accepted everywhere) ──
                 elif ev_type == "FAKE_LSA_INJECT":
                     all_nodes_sorted = sorted(list(self.G.nodes()))
                     atk_nbrs = {}
-                    # Assign very low cost (0.1) to attract traffic
-                    if len(all_nodes_sorted) >= 1:
-                        atk_nbrs[all_nodes_sorted[0]] = 0.1   # cost to first neighbor (usually A)
-                    if len(all_nodes_sorted) >= 2:
-                        atk_nbrs[all_nodes_sorted[1]] = 0.1   # cost to second neighbor (usually B)
-
-                    fake_lsa = {
-                        "router_id": "ATTACK",
-                        "sequence_num": 9999,
-                        "ttl": 64,
-                        "neighbors": atk_nbrs
-                    }
-
-                    self.logs_database.append({
-                        "time": current_time,
-                        "text": (f"[ATTACK EVENT] Adversary router 'ATTACK' injects forged LSA "
-                                 f"(Seq:9999, claiming neighbors {list(atk_nbrs.keys())} with cost 0.1). "
-                                 f"NO HMAC → ALL ROUTERS ACCEPT IT."),
-                        "routers": list(nodes), "type": "hmac_fail"
-                    })
-
-                    # Deliver to every node that has at least one 2-WAY neighbor
+                    if len(all_nodes_sorted) >= 1: atk_nbrs[all_nodes_sorted[0]] = 0.1
+                    if len(all_nodes_sorted) >= 2: atk_nbrs[all_nodes_sorted[1]] = 0.1
+                    fake_lsa = {"router_id": "ATTACK", "sequence_num": 9999, "ttl": 64, "neighbors": atk_nbrs}
+                    self.logs_database.append({"time": current_time, "text": f"[ATTACK EVENT] Adversary router 'ATTACK' injects forged LSA (Seq:9999, claiming neighbors {list(atk_nbrs.keys())} with cost 0.1). NO HMAC → ALL ROUTERS ACCEPT IT.", "routers": list(nodes), "type": "hmac_fail"})
                     delivered = 0
                     for n in nodes:
                         for nbr in self.G.neighbors(n):
@@ -547,15 +483,9 @@ class OSPFAsynchronousWorkspaceDashboard:
                                 event_queue.append((current_time + d, "LSA_ARRIVE", ("ATTACK", n, dict(fake_lsa), d)))
                                 delivered += 1
                                 break
-
                     if delivered == 0:
-                        self.logs_database.append({
-                            "time": current_time,
-                            "text": "[ATTACK EVENT] No 2-WAY adjacencies found yet. Fake LSA could not be delivered. Try after convergence.",
-                            "routers": [], "type": "hmac_fail"
-                        })
+                        self.logs_database.append({"time": current_time, "text": "[ATTACK EVENT] No 2-WAY adjacencies found yet. Fake LSA could not be delivered. Try after convergence.", "routers": [], "type": "hmac_fail"})
 
-            # ── CONVERGENCE CHECKS ──
             operational_nodes = [n for n in nodes if any(s == "2WAY" for s in adj_states[n].values())]
             is_synchronized = False
             if operational_nodes:
@@ -594,33 +524,17 @@ class OSPFAsynchronousWorkspaceDashboard:
 
             if current_state_str != last_logged_state:
                 if current_state_str == "GREEN":
-                    self.logs_database.append({
-                        "time": current_time,
-                        "text": "OSPF CONVERGED: All LSDBs synchronised and accurate to physical topology.",
-                        "routers": list(nodes), "type": "converged"
-                    })
+                    self.logs_database.append({"time": current_time, "text": "OSPF CONVERGED: All LSDBs synchronised and accurate to physical topology.", "routers": list(nodes), "type": "converged"})
                     if not initial_sync_logged:
                         initial_sync_logged = True
-                        self.convergence_metrics_database.append({
-                            "time": current_time, "type": "INITIAL",
-                            "text": f"Initial convergence at t={current_time}ms from boot.\n"
-                        })
+                        self.convergence_metrics_database.append({"time": current_time, "type": "INITIAL", "text": f"Initial convergence at t={current_time}ms from boot.\n"})
                     for item in list(pending_failure_tracks):
                         if item["t_timeout"] is not None:
                             u, v = item["edge"]
-                            self.convergence_metrics_database.append({
-                                "time": current_time, "type": "DISRUPTION",
-                                "text": (f"Link {u}-{v} failure recovery:\n"
-                                         f"  Total time after failure: {current_time - item['t_fail']}ms\n"
-                                         f"  Time after dead-timer: {current_time - item['t_timeout']}ms\n")
-                            })
+                            self.convergence_metrics_database.append({"time": current_time, "type": "DISRUPTION", "text": f"Link {u}-{v} failure recovery:\n  Total time after failure: {current_time - item['t_fail']}ms\n  Time after dead-timer: {current_time - item['t_timeout']}ms\n"})
                             pending_failure_tracks.remove(item)
                 elif current_state_str == "YELLOW":
-                    self.logs_database.append({
-                        "time": current_time,
-                        "text": "OSPF LSDBs synchronised but inaccurate to physical topology (discrepancy window).",
-                        "routers": list(nodes), "type": "process"
-                    })
+                    self.logs_database.append({"time": current_time, "text": "OSPF LSDBs synchronised but inaccurate to physical topology (discrepancy window).", "routers": list(nodes), "type": "process"})
                 last_logged_state = current_state_str
 
             active_tx = []
@@ -647,117 +561,96 @@ class OSPFAsynchronousWorkspaceDashboard:
             current_time += 1
 
     # -------------------------------------------------------
-    # UI LAYOUT (SCROLLABLE LEFT PANEL)
+    # UI LAYOUT
     # -------------------------------------------------------
     def setup_ui(self):
-        # Configure root grid
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=0)
         self.root.grid_columnconfigure(1, weight=1)
 
-        # Left scrollable container (column 0)
         left_container = tk.Frame(self.root, width=630)
         left_container.grid(row=0, column=0, sticky="nswe")
         left_container.grid_propagate(False)
         left_container.grid_rowconfigure(0, weight=1)
         left_container.grid_columnconfigure(0, weight=1)
 
-        # Canvas and scrollbar for left panel
         self.left_canvas = tk.Canvas(left_container, highlightthickness=0)
         scrollbar = tk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
         self.left_canvas.configure(yscrollcommand=scrollbar.set)
         self.left_canvas.grid(row=0, column=0, sticky="nswe")
         scrollbar.grid(row=0, column=1, sticky="ns")
 
-        # Inner frame for left-side widgets
         self.left_column = tk.Frame(self.left_canvas, padx=10, pady=10)
         self.left_canvas.create_window((0, 0), window=self.left_column, anchor="nw")
-
-        # Update scroll region when inner frame changes
         self.left_column.bind("<Configure>", self._on_left_column_configure)
         self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
 
-        # Right column (graph) (column 1)
         self.right_column = tk.Frame(self.root, padx=10, pady=10)
         self.right_column.grid(row=0, column=1, sticky="nswe")
         self.right_column.grid_rowconfigure(0, weight=1)
         self.right_column.grid_columnconfigure(0, weight=1)
 
-        # Build panels
         self.build_top_flooding_panel()
         self.build_bottom_inspector_panel()
         self.build_graph_canvas()
 
     def _on_left_column_configure(self, event=None):
-        # Update scroll region to encompass inner frame
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
 
     def _on_left_canvas_configure(self, event):
-        # Resize inner frame to fit canvas width
         self.left_canvas.itemconfig(self.left_canvas.find_withtag("all")[0], width=event.width)
 
     def build_top_flooding_panel(self):
         flood_frame = tk.LabelFrame(self.left_column, text=" 1. LSA Flooding & Security Panel ", font=("Helvetica", 11, "bold"), fg="#2c3e50", padx=8, pady=8)
         flood_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        # Row 1: Hello interval + Start
+        # ── NEW: Topology selector ──────────────────────────────────────────
+        topo_row = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
+        topo_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(topo_row, text="Network Topology File:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
+        self.topology_combo = ttk.Combobox(topo_row, state="readonly", width=22)
+        self.topology_combo.pack(side=tk.LEFT, padx=4)
+        self.topology_combo.bind("<<ComboboxSelected>>", self.on_topology_change)
+        # ────────────────────────────────────────────────────────────────────
+
         row1 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
         row1.pack(fill=tk.X, pady=(0, 4))
         tk.Label(row1, text="OSPF Hello Interval (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
         self.hello_combo = ttk.Combobox(row1, values=["1000", "2000", "3000", "5000"], state="readonly", width=8)
         self.hello_combo.pack(side=tk.LEFT, padx=4)
         self.hello_combo.set("3000")
-        self.start_btn = tk.Button(row1, text="Start Simulation", font=("Helvetica", 9, "bold"),
-                                   command=self.start_simulation, bg="#27ae60", fg="white")
+        self.start_btn = tk.Button(row1, text="Start Simulation", font=("Helvetica", 9, "bold"), command=self.start_simulation, bg="#27ae60", fg="white")
         self.start_btn.pack(side=tk.RIGHT, padx=4)
 
-        # Security status banner
-        self.security_banner = tk.Label(flood_frame,
-                                        text="SECURITY DISABLED — LSAs accepted without verification (INSECURE MODE)",
-                                        font=("Helvetica", 9, "bold"), bg="#e67e22", fg="white",
-                                        bd=1, relief=tk.SOLID, pady=3)
+        self.security_banner = tk.Label(flood_frame, text="SECURITY DISABLED — LSAs accepted without verification (INSECURE MODE)", font=("Helvetica", 9, "bold"), bg="#e67e22", fg="white", bd=1, relief=tk.SOLID, pady=3)
         self.security_banner.pack(fill=tk.X, pady=(0, 4))
 
-        # Row 2: Attack injection
         row2 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
         row2.pack(fill=tk.X, pady=(0, 4))
         tk.Label(row2, text="Security Attack:", font=("Helvetica", 9, "bold"), fg="#c0392b").pack(side=tk.LEFT, padx=2)
-        self.attack_btn = tk.Button(row2,
-                                    text="Inject Fake LSA from ATTACK router (neighbors A, B)",
-                                    font=("Helvetica", 9, "bold"),
-                                    command=self.inject_fake_lsa,
-                                    state="disabled",
-                                    bg="#c0392b", fg="white", activebackground="#a93226")
+        self.attack_btn = tk.Button(row2, text="Inject Fake LSA from ATTACK router (neighbors A, B)", font=("Helvetica", 9, "bold"), command=self.inject_fake_lsa, state="disabled", bg="#c0392b", fg="white", activebackground="#a93226")
         self.attack_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=4)
 
-        # Row 3: Link disruption
         row3 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
         row3.pack(fill=tk.X, pady=(0, 4))
         tk.Label(row3, text="Link Disruption:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
-        self.link_toggle_btn = tk.Button(row3, text="Select a Link on Map",
-                                         font=("Helvetica", 9, "bold"), state="disabled",
-                                         command=self.toggle_selected_link)
+        self.link_toggle_btn = tk.Button(row3, text="Select a Link on Map", font=("Helvetica", 9, "bold"), state="disabled", command=self.toggle_selected_link)
         self.link_toggle_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=4)
 
-        # Row 4: Delay
         row4 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
         row4.pack(fill=tk.X, pady=(0, 4))
         tk.Label(row4, text="Runtime Delay (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
-        self.delay_change_combo = ttk.Combobox(row4, values=["2","5","8","12","15","20","25","30","40","50"],
-                                               state="disabled", width=8)
+        self.delay_change_combo = ttk.Combobox(row4, values=["2","5","8","12","15","20","25","30","40","50"], state="disabled", width=8)
         self.delay_change_combo.pack(side=tk.RIGHT, padx=4)
         self.delay_change_combo.bind("<<ComboboxSelected>>", self.apply_runtime_delay_change)
 
-        # Row 5: Cost
         row5 = tk.Frame(flood_frame, bd=1, relief=tk.GROOVE, padx=4, pady=4)
         row5.pack(fill=tk.X, pady=(0, 4))
         tk.Label(row5, text="OSPF Cost Override:", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
-        self.cost_change_combo = ttk.Combobox(row5, values=["1","2","3","4","5","10","15","20","50","100"],
-                                              state="disabled", width=8)
+        self.cost_change_combo = ttk.Combobox(row5, values=["1","2","3","4","5","10","15","20","50","100"], state="disabled", width=8)
         self.cost_change_combo.pack(side=tk.RIGHT, padx=4)
         self.cost_change_combo.bind("<<ComboboxSelected>>", self.apply_runtime_cost_change)
 
-        # Step / navigation
         step_row = tk.Frame(flood_frame)
         step_row.pack(fill=tk.X, pady=2)
         tk.Label(step_row, text="Step Size (ms):", font=("Helvetica", 9, "bold")).pack(side=tk.LEFT, padx=2)
@@ -767,32 +660,25 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         nav_row = tk.Frame(flood_frame)
         nav_row.pack(fill=tk.X, pady=4)
-        self.prev_btn = tk.Button(nav_row, text="◀ Prev", font=("Helvetica", 10, "bold"),
-                                  command=self.prev_timeline_step, bg="#222f3e", fg="white")
+        self.prev_btn = tk.Button(nav_row, text="◀ Prev", font=("Helvetica", 10, "bold"), command=self.prev_timeline_step, bg="#222f3e", fg="white")
         self.prev_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
-        self.next_btn = tk.Button(nav_row, text="Next ▶", font=("Helvetica", 10, "bold"),
-                                  command=self.next_timeline_step, bg="#1e3799", fg="white")
+        self.next_btn = tk.Button(nav_row, text="Next ▶", font=("Helvetica", 10, "bold"), command=self.next_timeline_step, bg="#1e3799", fg="white")
         self.next_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=3)
 
         sc_row = tk.Frame(flood_frame)
         sc_row.pack(fill=tk.X, pady=2)
-        self.sync_btn = tk.Button(sc_row, text="Skip to Convergence ⚡", font=("Helvetica", 9, "bold"),
-                                  command=self.skip_to_synchronize, bg="#f39c12", fg="white")
+        self.sync_btn = tk.Button(sc_row, text="Skip to Convergence ⚡", font=("Helvetica", 9, "bold"), command=self.skip_to_synchronize, bg="#f39c12", fg="white")
         self.sync_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        self.reset_btn = tk.Button(sc_row, text="Reset Engine", font=("Helvetica", 9, "bold"),
-                                   command=self.reset_simulation, bg="#7f8c8d", fg="white")
+        self.reset_btn = tk.Button(sc_row, text="Reset Engine", font=("Helvetica", 9, "bold"), command=self.reset_simulation, bg="#7f8c8d", fg="white")
         self.reset_btn.pack(side=tk.RIGHT, expand=True, fill=tk.X, padx=2)
 
-        self.convergence_indicator_lbl = tk.Label(flood_frame, text="Simulation Not Started",
-                                                  font=("Helvetica", 10, "bold"), bg="#dcdde1", fg="#2c3e50",
-                                                  bd=1, relief=tk.SOLID, pady=3)
+        self.convergence_indicator_lbl = tk.Label(flood_frame, text="Simulation Not Started", font=("Helvetica", 10, "bold"), bg="#dcdde1", fg="#2c3e50", bd=1, relief=tk.SOLID, pady=3)
         self.convergence_indicator_lbl.pack(fill=tk.X, pady=4)
 
         tk.Label(flood_frame, text="LSDB Sync Matrix:", font=("Helvetica", 9, "bold"), fg="#34495e").pack(anchor=tk.W)
         self.flood_matrix_text = tk.Text(flood_frame, height=5, font=("Courier New", 9), bg="#f8f9fa", bd=1, relief=tk.SOLID)
         self.flood_matrix_text.pack(fill=tk.X)
 
-        # Notebook: Global Commentary | Convergence
         nb = ttk.Notebook(flood_frame)
         nb.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         tab_global = tk.Frame(nb)
@@ -802,20 +688,16 @@ class OSPFAsynchronousWorkspaceDashboard:
 
         sb1 = tk.Scrollbar(tab_global)
         sb1.pack(side=tk.RIGHT, fill=tk.Y)
-        self.flood_log = tk.Text(tab_global, wrap=tk.WORD, font=("Helvetica", 9), bg="#efeef3",
-                                 bd=0, padx=4, pady=4, yscrollcommand=sb1.set)
+        self.flood_log = tk.Text(tab_global, wrap=tk.WORD, font=("Helvetica", 9), bg="#efeef3", bd=0, padx=4, pady=4, yscrollcommand=sb1.set)
         self.flood_log.pack(fill=tk.BOTH, expand=True)
         sb1.config(command=self.flood_log.yview)
 
         sb2 = tk.Scrollbar(tab_conv)
         sb2.pack(side=tk.RIGHT, fill=tk.Y)
-        self.convergence_log_box = tk.Text(tab_conv, wrap=tk.WORD, font=("Courier New", 9),
-                                           bg="#1e272e", fg="white", bd=0, padx=4, pady=4,
-                                           yscrollcommand=sb2.set)
+        self.convergence_log_box = tk.Text(tab_conv, wrap=tk.WORD, font=("Courier New", 9), bg="#1e272e", fg="white", bd=0, padx=4, pady=4, yscrollcommand=sb2.set)
         self.convergence_log_box.pack(fill=tk.BOTH, expand=True)
         sb2.config(command=self.convergence_log_box.yview)
 
-        # Tag styles (removed HMAC-specific tags)
         self.flood_log.tag_config("init",      foreground="#7f8c8d")
         self.flood_log.tag_config("hello_tx",  foreground="#0984e3", font=("Helvetica", 9, "bold"))
         self.flood_log.tag_config("hello_rx",  foreground="#00b894", font=("Helvetica", 9, "bold"))
@@ -825,33 +707,27 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.flood_log.tag_config("dropped",   foreground="#c0392b", font=("Helvetica", 9, "italic"))
         self.flood_log.tag_config("db_update", foreground="#8e44ad", font=("Helvetica", 9, "bold"))
         self.flood_log.tag_config("converged", foreground="#1b1464", background="#fff200", font=("Helvetica", 9, "bold"))
-        self.flood_log.tag_config("hmac_fail", foreground="white",   background="#c0392b", font=("Helvetica", 9, "bold"))  # reuse for attack
-
+        self.flood_log.tag_config("hmac_fail", foreground="white",   background="#c0392b", font=("Helvetica", 9, "bold"))
         self.convergence_log_box.tag_config("INITIAL",    foreground="#2ecc71", font=("Courier New", 9, "bold"))
         self.convergence_log_box.tag_config("DISRUPTION", foreground="#f1c40f")
 
     def build_bottom_inspector_panel(self):
-        inspect_frame = tk.LabelFrame(self.left_column, text=" 2. Local Router Inspector Panel ",
-                                      font=("Helvetica", 11, "bold"), fg="#c0392b", padx=8, pady=8)
+        inspect_frame = tk.LabelFrame(self.left_column, text=" 2. Local Router Inspector Panel ", font=("Helvetica", 11, "bold"), fg="#c0392b", padx=8, pady=8)
         inspect_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.packet_header_lbl = tk.Label(inspect_frame, text="LSA Packet Data: Router A",
-                                          font=("Helvetica", 10, "bold"), fg="#c0392b")
+        self.packet_header_lbl = tk.Label(inspect_frame, text="LSA Packet Data: Router A", font=("Helvetica", 10, "bold"), fg="#c0392b")
         self.packet_header_lbl.pack(anchor=tk.W)
-        self.lsa_view_box = tk.Text(inspect_frame, height=5, font=("Courier New", 9), bg="#fdf2f2",
-                                    bd=1, relief=tk.SOLID, padx=4, pady=4)
+        self.lsa_view_box = tk.Text(inspect_frame, height=5, font=("Courier New", 9), bg="#fdf2f2", bd=1, relief=tk.SOLID, padx=4, pady=4)
         self.lsa_view_box.pack(fill=tk.X, pady=(0, 4))
 
-        self.local_log_header_lbl = tk.Label(inspect_frame, text="Local Port Log for Router A:",
-                                             font=("Helvetica", 10, "bold"), fg="#78281f")
+        self.local_log_header_lbl = tk.Label(inspect_frame, text="Local Port Log for Router A:", font=("Helvetica", 10, "bold"), fg="#78281f")
         self.local_log_header_lbl.pack(anchor=tk.W)
         llc = tk.Frame(inspect_frame, bd=1, relief=tk.SOLID, height=100)
         llc.pack(fill=tk.X, pady=(0, 4))
         llc.pack_propagate(False)
         sb3 = tk.Scrollbar(llc)
         sb3.pack(side=tk.RIGHT, fill=tk.Y)
-        self.local_router_log_box = tk.Text(llc, wrap=tk.WORD, font=("Helvetica", 9), bg="white",
-                                            bd=0, padx=4, pady=4, yscrollcommand=sb3.set)
+        self.local_router_log_box = tk.Text(llc, wrap=tk.WORD, font=("Helvetica", 9), bg="white", bd=0, padx=4, pady=4, yscrollcommand=sb3.set)
         self.local_router_log_box.pack(fill=tk.BOTH, expand=True)
         sb3.config(command=self.local_router_log_box.yview)
 
@@ -865,18 +741,16 @@ class OSPFAsynchronousWorkspaceDashboard:
             box.tag_config("dropped",   foreground="#c0392b", font=("Helvetica", 9, "italic"))
             box.tag_config("db_update", foreground="#8e44ad", font=("Helvetica", 9, "bold"))
 
-        # Routing table (with its own internal scrollbar)
-        self.table_header_lbl = tk.Label(inspect_frame, text="Routing Table: Router A",
-                                         font=("Helvetica", 10, "bold"), fg="#1b5c8f")
+        self.table_header_lbl = tk.Label(inspect_frame, text="Routing Table: Router A", font=("Helvetica", 10, "bold"), fg="#1b5c8f")
         self.table_header_lbl.pack(anchor=tk.W)
         tc = tk.Frame(inspect_frame, bd=1, relief=tk.SOLID)
         tc.pack(fill=tk.BOTH, expand=True)
         sb4 = tk.Scrollbar(tc)
         sb4.pack(side=tk.RIGHT, fill=tk.Y)
-        self.table_view_box = tk.Text(tc, font=("Courier New", 9), bg="#f8f9fa", bd=0, padx=4, pady=4,
-                                      yscrollcommand=sb4.set)
+        self.table_view_box = tk.Text(tc, font=("Courier New", 9), bg="#f8f9fa", bd=0, padx=4, pady=4, yscrollcommand=sb4.set)
         self.table_view_box.pack(fill=tk.BOTH, expand=True)
         sb4.config(command=self.table_view_box.yview)
+        self.table_view_box.tag_config("compromised", foreground="#c0392b", font=("Courier New", 9, "bold"))
 
     def build_graph_canvas(self):
         self.fig_f, self.ax_f = plt.subplots(figsize=(6, 8))
@@ -893,14 +767,11 @@ class OSPFAsynchronousWorkspaceDashboard:
         closest_node, closest_dist = None, float('inf')
         for node, (nx_val, ny_val) in self.node_positions.items():
             d = ((x0 - nx_val)**2 + (y0 - ny_val)**2)**0.5
-            if d < closest_dist:
-                closest_dist = d; closest_node = node
+            if d < closest_dist: closest_dist = d; closest_node = node
         if closest_dist <= 0.25 and closest_node:
             self.selected_node = closest_node
-            if self.simulation_started:
-                self.render_all_views()
-            else:
-                self.render_base_configuration_graph()
+            if self.simulation_started: self.render_all_views()
+            else: self.render_base_configuration_graph()
             return
         closest_edge, closest_edge_dist = None, float('inf')
         for u, v in self.G.edges():
@@ -910,18 +781,12 @@ class OSPFAsynchronousWorkspaceDashboard:
             if mag2 == 0: continue
             t = max(0, min(1, ((x0-x1)*dx + (y0-y1)*dy) / mag2))
             d = ((x0 - x1 - t*dx)**2 + (y0 - y1 - t*dy)**2)**0.5
-            if d < closest_edge_dist:
-                closest_edge_dist = d; closest_edge = tuple(sorted((u, v)))
+            if d < closest_edge_dist: closest_edge_dist = d; closest_edge = tuple(sorted((u, v)))
         if closest_edge_dist <= 0.15 and closest_edge:
             self.selected_edge = closest_edge
-            if self.simulation_started:
-                self.render_all_views()
-            else:
-                self.render_base_configuration_graph()
+            if self.simulation_started: self.render_all_views()
+            else: self.render_base_configuration_graph()
 
-    # -------------------------------------------------------
-    # BASE CONFIG GRAPH
-    # -------------------------------------------------------
     def render_base_configuration_graph(self):
         self.ax_f.clear()
         nc = ['#1e3799' if n == self.selected_node else '#dcdde1' for n in sorted(self.G.nodes())]
@@ -936,22 +801,19 @@ class OSPFAsynchronousWorkspaceDashboard:
             self.ax_f.text(x, y, name, fontsize=12, fontweight='bold', ha='center', va='center', color=fc)
         el = {(u, v): f"bw:{d['bandwidth']}\ncost:{d['cost']}\n({d['delay']}ms)" for u, v, d in self.G.edges(data=True)}
         nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=el, font_size=9, font_weight='bold', ax=self.ax_f)
-        self.ax_f.set_title("OSPF Topology — Configuration Mode  |  NO SECURITY (INSECURE)", fontsize=11, fontweight='bold', color="#2c3e50")
+        topo_name = self.topology_combo.get() if hasattr(self, 'topology_combo') else ''
+        self.ax_f.set_title(f"OSPF Topology — Configuration Mode  |  NO SECURITY  [{topo_name}]", fontsize=11, fontweight='bold', color="#2c3e50")
         self.ax_f.axis('off')
         self.canvas_f.draw()
         self.link_toggle_btn.config(text="Select a Link on Map", state="disabled", bg="#7f8c8d")
         self.delay_change_combo.config(state="disabled")
         self.cost_change_combo.config(state="disabled")
 
-    # -------------------------------------------------------
-    # RUNTIME PANELS
-    # -------------------------------------------------------
     def update_text_panels_data(self):
         target = self.selected_node
         T = self.current_time_ms
         state = self.timeline_states[T]
 
-        # Link controls
         if self.selected_edge is None:
             self.link_toggle_btn.config(text="Select a Link on Map", state="disabled", bg="#7f8c8d")
             self.delay_change_combo.config(state="disabled")
@@ -967,16 +829,13 @@ class OSPFAsynchronousWorkspaceDashboard:
             else:
                 self.link_toggle_btn.config(text=f"Disable Link {u}-{v}", state="normal", bg="#c0392b", fg="white")
 
-        # Convergence indicator
         if state["is_true_converged"]:
-            self.convergence_indicator_lbl.config(
-                text=f"CONVERGED & STABLE  [t={format_time(state['true_convergence_time'])}]", bg="#d4edda", fg="#155724")
+            self.convergence_indicator_lbl.config(text=f"CONVERGED & STABLE  [t={format_time(state['true_convergence_time'])}]", bg="#d4edda", fg="#155724")
         elif state["is_protocol_converged"]:
             self.convergence_indicator_lbl.config(text="Stable but Inaccurate", bg="#fff3cd", fg="#856404")
         else:
             self.convergence_indicator_lbl.config(text="Syncing...", bg="#ffeaa7", fg="#d35400")
 
-        # Build local topology from LSDB
         known = state['lsdb'][target]
         local_G = nx.Graph()
         local_G.add_node(target)
@@ -991,12 +850,10 @@ class OSPFAsynchronousWorkspaceDashboard:
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             pass
 
-        # Labels
         self.packet_header_lbl.config(text=f"LSA Packet Data: Router {target}")
         self.local_log_header_lbl.config(text=f"Local Port Log for Router {target}:")
         self.table_header_lbl.config(text=f"Routing Table ({T}ms snapshot): Router {target}")
 
-        # LSA packet view (no HMAC field)
         self.lsa_view_box.delete('1.0', tk.END)
         if target in known:
             lsa = known[target]
@@ -1008,7 +865,6 @@ class OSPFAsynchronousWorkspaceDashboard:
         else:
             self.lsa_view_box.insert(tk.END, f"Router_{target}: DOWN — no LSA generated yet.")
 
-        # Local port log
         self.local_router_log_box.config(state=tk.NORMAL)
         self.local_router_log_box.delete('1.0', tk.END)
         found = False
@@ -1021,35 +877,25 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.local_router_log_box.config(state=tk.DISABLED)
         self.local_router_log_box.see(tk.END)
 
-        # Routing table – mark paths that include ATTACK router as compromised
         self.table_view_box.delete('1.0', tk.END)
         all_dests = sorted(n for n in local_G.nodes() if n != target)
         if not all_dests:
             self.table_view_box.insert(tk.END, "(No routes — no LSAs learned yet)\n")
         else:
-            hdr = f"{'Destination':<14}  {'Cost':<6}  {'Next Hop':<12}  {'Path'}\n"
-            self.table_view_box.insert(tk.END, hdr)
+            self.table_view_box.insert(tk.END, f"{'Destination':<14}  {'Cost':<6}  {'Next Hop':<12}  {'Path'}\n")
             self.table_view_box.insert(tk.END, "-" * 70 + "\n")
             for dest in all_dests:
                 if dest in paths:
-                    cost    = lengths[dest]
-                    pv      = paths[dest]
-                    nh      = pv[1] if len(pv) > 1 else dest
-                    # Check if path contains the fake ATTACK router
+                    cost = lengths[dest]
+                    pv = paths[dest]
+                    nh = pv[1] if len(pv) > 1 else dest
                     compromised = "ATTACK" in pv
                     if compromised:
-                        atk_flag = "  *** COMPROMISED - VIA ATTACK NODE ***"
-                        self.table_view_box.insert(tk.END,
-                            f"{'Rtr ' + dest:<14}  {cost:<6}  {'Rtr ' + nh:<12}  {' -> '.join(pv)}{atk_flag}\n",
-                            ("compromised",))
+                        self.table_view_box.insert(tk.END, f"{'Rtr ' + dest:<14}  {cost:<6}  {'Rtr ' + nh:<12}  {' -> '.join(pv)}  *** COMPROMISED - VIA ATTACK NODE ***\n", ("compromised",))
                     else:
-                        self.table_view_box.insert(tk.END,
-                            f"{'Rtr ' + dest:<14}  {cost:<6}  {'Rtr ' + nh:<12}  {' -> '.join(pv)}\n")
+                        self.table_view_box.insert(tk.END, f"{'Rtr ' + dest:<14}  {cost:<6}  {'Rtr ' + nh:<12}  {' -> '.join(pv)}\n")
                 else:
-                    self.table_view_box.insert(tk.END,
-                        f"{'Rtr ' + dest:<14}  {'N/A':<6}  {'N/A':<12}  Unreachable\n")
-        # Tag for compromised routes
-        self.table_view_box.tag_config("compromised", foreground="#c0392b", font=("Courier New", 9, "bold"))
+                    self.table_view_box.insert(tk.END, f"{'Rtr ' + dest:<14}  {'N/A':<6}  {'N/A':<12}  Unreachable\n")
 
     def next_timeline_step(self):
         step = int(self.step_combo.get())
@@ -1069,15 +915,11 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.update_text_panels_data()
         self.render_flooding_state_view()
 
-    # -------------------------------------------------------
-    # GRAPH RENDER
-    # -------------------------------------------------------
     def render_flooding_state_view(self):
         self.ax_f.clear()
         T = self.current_time_ms
         state = self.timeline_states[T]
 
-        # Global log
         self.flood_log.config(state=tk.NORMAL)
         self.flood_log.delete('1.0', tk.END)
         for e in self.logs_database:
@@ -1086,7 +928,6 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.flood_log.config(state=tk.DISABLED)
         self.flood_log.see(tk.END)
 
-        # Convergence log
         self.convergence_log_box.config(state=tk.NORMAL)
         self.convergence_log_box.delete('1.0', tk.END)
         found_metrics = False
@@ -1099,20 +940,18 @@ class OSPFAsynchronousWorkspaceDashboard:
         self.convergence_log_box.config(state=tk.DISABLED)
         self.convergence_log_box.see(tk.END)
 
-        # LSDB matrix
         self.flood_matrix_text.delete('1.0', tk.END)
         self.flood_matrix_text.insert(tk.END, f"{'Node':<6} | LSDB contents\n{'-'*40}\n")
         for node, d in sorted(state['lsdb'].items()):
             self.flood_matrix_text.insert(tk.END, f"  {node:<4} | {{{', '.join(sorted(d.keys()))}}}\n")
 
-        # Node colours
         total = len(self.G.nodes())
         nc = []
         for n in sorted(self.G.nodes()):
-            if n == self.selected_node:   nc.append('#1e3799')
-            elif len(state['lsdb'][n]) == total: nc.append('#2ecc71')
-            elif len(state['lsdb'][n]) > 0:      nc.append('#e84118')
-            else:                                  nc.append('#dcdde1')
+            if n == self.selected_node:             nc.append('#1e3799')
+            elif len(state['lsdb'][n]) == total:    nc.append('#2ecc71')
+            elif len(state['lsdb'][n]) > 0:         nc.append('#e84118')
+            else:                                    nc.append('#dcdde1')
 
         tx_edges, edge_color_map = set(), {}
         for u, v, ts, te, pt in state['active_links']:
@@ -1135,10 +974,8 @@ class OSPFAsynchronousWorkspaceDashboard:
                 wid = 5.0 if active else 1.5
                 sty = 'solid'
             if selected:
-                nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u,v)],
-                                       edge_color='#a29bfe', width=8.0, alpha=0.6, ax=self.ax_f)
-            nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u,v)],
-                                   edge_color=col, width=wid, style=sty, ax=self.ax_f)
+                nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u, v)], edge_color='#a29bfe', width=8.0, alpha=0.6, ax=self.ax_f)
+            nx.draw_networkx_edges(self.G, self.node_positions, edgelist=[(u, v)], edge_color=col, width=wid, style=sty, ax=self.ax_f)
 
         nx.draw_networkx_nodes(self.G, self.node_positions, node_color=nc, node_size=800, edgecolors='#2c3e50', ax=self.ax_f)
         for name, (x, y) in self.node_positions.items():
@@ -1157,14 +994,14 @@ class OSPFAsynchronousWorkspaceDashboard:
             el[(u, v)] = f"{status}\nbw:{bw}\n({delay}ms)"
         nx.draw_networkx_edge_labels(self.G, self.node_positions, edge_labels=el, font_size=9, font_weight='bold', ax=self.ax_f)
 
+        topo_name = self.topology_combo.get() if hasattr(self, 'topology_combo') else ''
         if self.attack_injected and self.attack_inject_time is not None and T >= self.attack_inject_time:
-            self.ax_f.set_title(
-                f"OSPF Clock: {T}ms  |  ATTACK LSA @ {self.attack_inject_time}ms — ACCEPTED (cost=0.1) — Routes compromised",
-                fontsize=10, fontweight='bold', color="#c0392b")
+            self.ax_f.set_title(f"OSPF Clock: {T}ms  |  ATTACK LSA @ {self.attack_inject_time}ms — ACCEPTED  [{topo_name}]", fontsize=10, fontweight='bold', color="#c0392b")
         else:
-            self.ax_f.set_title(f"OSPF Clock: {T}ms  |  NO SECURITY (INSECURE MODE)", fontsize=11, fontweight='bold', color="#e67e22")
+            self.ax_f.set_title(f"OSPF Clock: {T}ms  |  NO SECURITY (INSECURE MODE)  [{topo_name}]", fontsize=11, fontweight='bold', color="#e67e22")
         self.ax_f.axis('off')
         self.canvas_f.draw()
+
 
 if __name__ == '__main__':
     window_root = tk.Tk()
